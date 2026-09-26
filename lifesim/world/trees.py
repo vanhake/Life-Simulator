@@ -127,15 +127,23 @@ class Forest:
     # ------------------------------------------------------------------ tick
 
     def update(
-        self, clock: "Clock", config: "SimConfig", terrain: TerrainMap, rng: random.Random
+        self,
+        clock: "Clock",
+        config: "SimConfig",
+        terrain: TerrainMap,
+        rng: random.Random,
+        ticks: int = 1,
     ) -> None:
-        fruit_factor = clock.fruit_factor
-        seed_chance = config.tree_seed_chance_per_day / clock.ticks_per_day * clock.seed_factor
+        """Advance every tree by `ticks` ticks."""
+        fruit_factor = clock.fruit_factor * ticks
+        seed_chance = (
+            config.tree_seed_chance_per_day / clock.ticks_per_day * clock.seed_factor * ticks
+        )
         seeds: list[Tree] = []
         died = False
 
         for tree in self.trees:
-            tree.age += 1
+            tree.age += ticks
             if tree.age >= tree.max_age:
                 tree.alive = False
                 tree.has_fruit = False
@@ -143,7 +151,7 @@ class Forest:
                 continue
             if not tree.has_fruit:
                 # Saplings grow at a constant pace; fruit regrowth follows the season.
-                tree.regrow_timer -= 1.0 if tree.is_sapling else fruit_factor
+                tree.regrow_timer -= ticks if tree.is_sapling else fruit_factor
                 if tree.regrow_timer <= 0:
                     tree.has_fruit = True
             if seed_chance > 0 and not tree.is_sapling and rng.random() < seed_chance:

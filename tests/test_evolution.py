@@ -19,13 +19,16 @@ def empty_world(**overrides) -> Simulation:
     sim.terrain = TerrainMap(np.zeros((30, 30), dtype=np.uint8))
     sim.forest.trees.clear()
     sim.forest.index.clear()
+    sim.clock.tick = cfg.ticks_per_day // 2  # noon: nobody wants to sleep
     return sim
 
 
 def adult(sim: Simulation, x: float, y: float, seed: int = 0):
+    """A mature, well-fed minion that longs for a partner."""
     m = sim.spawn_minion(x, y, Genome.random(random.Random(seed)))
     m.age = m.maturity
     m.energy = m.traits.max_energy
+    m.needs.partner = 0.0
     return m
 
 

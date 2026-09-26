@@ -20,8 +20,8 @@ class SimConfig:
     night_vision_factor: float = 0.4  # fraction of vision left at darkest night
 
     # --- food ---
-    fruit_regrow_ticks: int = 1200  # base value, scaled by season
-    fruit_energy: float = 30.0
+    fruit_regrow_ticks: int = 1500  # base value, scaled by season
+    fruit_energy: float = 28.0
     hunger_threshold: float = 0.6  # seek food when energy falls below this fraction of max
 
     # --- trees ---

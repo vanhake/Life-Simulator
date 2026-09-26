@@ -1,25 +1,22 @@
-"""Minion state, gene-derived traits and the phase-2 behaviour (forage / mate / wander)."""
+"""Minion: body, needs, perception and execution of the action chosen by the brain."""
 
 from __future__ import annotations
 
 import math
-import random
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from lifesim.agents.brain import Action, Perception, choose_action
 from lifesim.agents.genome import Genome
+from lifesim.agents.needs import Needs, clamp01
+from lifesim.world.pathfinding import find_path, line_clear
 
 if TYPE_CHECKING:
     from lifesim.core.simulation import Simulation
     from lifesim.world.trees import Tree
 
-
-class Action(Enum):
-    WANDER = "Umherstreifen"
-    SEEK_FOOD = "Futter suchen"
-    EAT = "Essen"
-    SEEK_MATE = "Partner suchen"
+__all__ = ["Action", "DeathCause", "Minion", "Traits"]
 
 
 class DeathCause(Enum):
@@ -34,8 +31,17 @@ def lerp(lo: float, hi: float, t: float) -> float:
 # Energy the body burns per tick just by existing, and per tile travelled.
 BASE_DRAIN = 0.02
 MOVE_DRAIN_PER_TILE = 0.25
+SLEEP_DRAIN_FACTOR = 0.6
+REST_DRAIN_FACTOR = 0.85
 EAT_RANGE = 0.6
 MATE_RANGE = 1.0
+SOCIAL_RADIUS = 4.0
+WAYPOINT_RADIUS = 0.2
+THINK_INTERVAL = 6  # ticks between regular decisions
+NEEDS_INTERVAL = 6  # ticks between need updates (applied with the accumulated time)
+REGION_SIZE = 6  # tiles per exploration memory cell
+AGGRESSION_THREAT_MIN = 0.6
+STATUS_PER_CHILD = 0.15
 
 
 @dataclass(frozen=True)
@@ -53,6 +59,9 @@ class Traits:
     maturity_days: float  # long-lived minions mature later
     mate_cooldown_days: float
     child_cost: float  # fraction of own max energy given to each child
+    restlessness: float  # activity satisfaction lost per day when not moving
+    loneliness: float  # belonging lost per day when alone
+    boredom: float  # fulfilment lost per day
 
     @classmethod
     def from_genome(cls, g: Genome) -> "Traits":
@@ -71,6 +80,9 @@ class Traits:
             maturity_days=lerp(1.2, 2.4, g["lifespan"]),
             mate_cooldown_days=lerp(1.5, 0.5, g["fertility"]),
             child_cost=lerp(0.2, 0.35, g["fertility"]),
+            restlessness=lerp(1.5, 8.0, g["activity_need"]),
+            loneliness=lerp(0.2, 1.5, g["sociability"]),
+            boredom=lerp(0.2, 1.2, g["curiosity"]),
         )
 
 
@@ -87,20 +99,31 @@ class Minion:
     maturity: int = 0  # ticks
     traits: Traits = field(init=False)
     energy: float = field(init=False)
+    needs: Needs = field(default_factory=Needs)
     alive: bool = True
     death_cause: DeathCause | None = None
     action: Action = Action.WANDER
-    target: tuple[float, float] | None = None
+    perception: Perception = field(default_factory=Perception)
     target_tree: "Tree | None" = None
-    target_mate: "Minion | None" = None
+    target_minion: "Minion | None" = None  # partner or company being approached
+    path: list[tuple[float, float]] = field(default_factory=list)
     mate_cooldown: int = 0
     heading: float = 0.0
     fruits_eaten: int = 0
     children: int = 0
+    explored: dict[tuple[int, int], int] = field(default_factory=dict)  # region -> last tick
+    _region: tuple[int, int] | None = None
+    _moved: float = 0.0  # distance walked this tick
+    _walked: float = 0.0  # distance walked since the last need update
+    _slept: int = 0  # ticks slept since the last need update
+    _redecide: bool = True
 
     def __post_init__(self) -> None:
         self.traits = Traits.from_genome(self.genome)
         self.energy = self.traits.max_energy * 0.8
+        self.needs.hunger = self.energy_frac
+
+    # ------------------------------------------------------------------ properties
 
     @property
     def energy_frac(self) -> float:
@@ -117,6 +140,15 @@ class Minion:
             return 1.0
         return min(1.0, 0.5 + 0.5 * self.age / self.maturity)
 
+    @property
+    def skill(self) -> float:
+        """Foraging skill in [0, 1) that grows with experience."""
+        return 1.0 - math.exp(-self.fruits_eaten / 25)
+
+    @property
+    def target(self) -> tuple[float, float] | None:
+        return self.path[-1] if self.path else None
+
     def vision(self, sim: "Simulation") -> float:
         return self.traits.vision * sim.vision_factor
 
@@ -126,6 +158,7 @@ class Minion:
             and self.is_adult
             and self.mate_cooldown <= 0
             and self.energy_frac >= sim.config.mate_energy_threshold
+            and self.action is not Action.SLEEP
         )
 
     def is_close_kin(self, other: "Minion") -> bool:
@@ -136,43 +169,43 @@ class Minion:
             return True
         return bool(self.parents and other.parents and set(self.parents) & set(other.parents))
 
-    # ------------------------------------------------------------------ decision
+    # ------------------------------------------------------------------ perception
 
-    def think(self, sim: "Simulation") -> None:
+    def perceive(self, sim: "Simulation") -> Perception:
         vision = self.vision(sim)
+        p = Perception()
+        want_mate = self.can_mate(sim) and len(sim.minions) < sim.config.max_population
+        mate_d = vision
+        my_strength = self.genome["strength"]
+        for other in sim.minion_index.query_radius(self.x, self.y, vision):
+            if other is self or not other.alive:
+                continue
+            d = math.hypot(other.x - self.x, other.y - self.y)
+            if d > vision:
+                continue
+            if d <= SOCIAL_RADIUS:
+                p.near_count += 1
+            if d < p.nearest_other_dist:
+                p.nearest_other, p.nearest_other_dist = other, d
+            if want_mate and d <= mate_d and other.can_mate(sim) and not self.is_close_kin(other):
+                p.mate, mate_d = other, d
+            aggression = other.genome["aggression"]
+            if aggression > AGGRESSION_THREAT_MIN and not self.is_close_kin(other):
+                edge = other.genome["strength"] - my_strength + 0.2
+                if edge > 0:
+                    t = (1 - d / vision) * (aggression - AGGRESSION_THREAT_MIN) * 2.5 * edge
+                    if t > p.threat:
+                        p.threat, p.threat_pos = t, (other.x, other.y)
+        # Company protects: a crowd of nearby minions makes threats less frightening.
+        p.threat = clamp01(p.threat * (1 - 0.15 * min(p.near_count, 4)))
 
-        if self.energy_frac < sim.config.hunger_threshold:
-            self.target_mate = None
-            if self.target_tree is None or not self.target_tree.has_fruit:
-                self.target_tree = self._find_fruit(sim, vision)
-            if self.target_tree is not None:
-                self.action = Action.SEEK_FOOD
-                self.target = (self.target_tree.x, self.target_tree.y)
-                return
-        else:
-            self.target_tree = None
+        if self.energy_frac < 0.97:
+            p.fruit = self._find_fruit(sim, vision * (1 + 0.3 * self.skill))
+        return p
 
-        if self.can_mate(sim) and len(sim.minions) < sim.config.max_population:
-            mate = self.target_mate
-            if mate is None or not mate.can_mate(sim):
-                mate = self._find_mate(sim, vision)
-            self.target_mate = mate
-            if mate is not None:
-                self.action = Action.SEEK_MATE
-                self.target = (mate.x, mate.y)
-                return
-        else:
-            self.target_mate = None
-
-        if self.action is not Action.WANDER:
-            self.target = None
-        self.action = Action.WANDER
-        if self.target is None or self._reached(self.target, 0.3):
-            self.target = self._random_destination(sim.terrain, sim.rng, vision)
-
-    def _find_fruit(self, sim: "Simulation", vision: float) -> "Tree | None":
-        best, best_d = None, vision
-        for tree in sim.forest.index.query_radius(self.x, self.y, vision):
+    def _find_fruit(self, sim: "Simulation", radius: float) -> "Tree | None":
+        best, best_d = None, radius
+        for tree in sim.forest.index.query_radius(self.x, self.y, radius):
             if not tree.has_fruit:
                 continue
             d = math.hypot(tree.x - self.x, tree.y - self.y)
@@ -180,92 +213,256 @@ class Minion:
                 best, best_d = tree, d
         return best
 
-    def _find_mate(self, sim: "Simulation", vision: float) -> "Minion | None":
-        best, best_d = None, vision
-        for other in sim.minion_index.query_radius(self.x, self.y, vision):
-            if other is self or not other.can_mate(sim) or self.is_close_kin(other):
-                continue
-            d = math.hypot(other.x - self.x, other.y - self.y)
-            if d <= best_d:
-                best, best_d = other, d
-        return best
+    # ------------------------------------------------------------------ decision
 
-    def _random_destination(
-        self, terrain, rng: random.Random, vision: float
-    ) -> tuple[float, float] | None:
+    def think(self, sim: "Simulation") -> None:
+        if not self._redecide and (sim.tick + self.id) % THINK_INTERVAL:
+            return
+        self._redecide = False
+        p = self.perceive(sim)
+        self.perception = p
+        self.needs.safety = 1.0 - p.threat
+        previous = self.action
+        action = choose_action(self, sim, p)
+        self.action = action
+
+        if action is Action.SEEK_FOOD:
+            if p.fruit is not None:
+                if p.fruit is not self.target_tree or not self.path:
+                    self.target_tree = p.fruit
+                    self._go_to(sim, (p.fruit.x, p.fruit.y))
+            elif previous is not Action.SEEK_FOOD or not self.path:
+                self.target_tree = None
+                self._go_to_unexplored(sim)
+        elif action in (Action.SLEEP, Action.REST):
+            self.path.clear()
+        elif action is Action.FLEE:
+            self._flee(sim, p.threat_pos)
+        elif action is Action.WANDER:
+            if previous is not Action.WANDER or not self.path:
+                self._go_random(sim)
+        elif action is Action.SOCIALIZE:
+            self.target_minion = p.nearest_other
+            if p.nearest_other_dist > 1.5:
+                self._go_to(sim, (p.nearest_other.x, p.nearest_other.y))
+            else:
+                self.path.clear()
+        elif action is Action.SEEK_MATE:
+            self.target_minion = p.mate
+            self._go_to(sim, (p.mate.x, p.mate.y))
+        elif action is Action.EXPLORE:
+            if previous is not Action.EXPLORE or not self.path:
+                self._go_to_unexplored(sim)
+
+        if action is not Action.SEEK_FOOD:
+            self.target_tree = None
+        if action not in (Action.SOCIALIZE, Action.SEEK_MATE):
+            self.target_minion = None
+
+    # ------------------------------------------------------------------ destinations
+
+    def _go_to(self, sim: "Simulation", goal: tuple[float, float]) -> bool:
+        terrain = sim.terrain
+        if line_clear(terrain, self.x, self.y, goal[0], goal[1]):
+            self.path = [goal]
+            return True
+        path = find_path(terrain, (self.x, self.y), goal)
+        if path is None:
+            self.path = []
+            return False
+        self.path = path
+        return True
+
+    def _go_random(self, sim: "Simulation") -> None:
         # Keep roughly the current heading so wandering looks purposeful rather than jittery.
+        rng, vision = sim.rng, self.vision(sim)
         for _ in range(8):
             self.heading += rng.uniform(-1.2, 1.2)
             r = rng.uniform(2.0, max(2.0, vision))
-            tx = self.x + math.cos(self.heading) * r
-            ty = self.y + math.sin(self.heading) * r
-            if terrain.passable(tx, ty):
-                return tx, ty
-        return None
+            tx, ty = self.x + math.cos(self.heading) * r, self.y + math.sin(self.heading) * r
+            if sim.terrain.passable(tx, ty) and self._go_to(sim, (tx, ty)):
+                return
+        self.path = []
 
-    def _reached(self, point: tuple[float, float], radius: float) -> bool:
-        return math.hypot(point[0] - self.x, point[1] - self.y) <= radius
+    def _go_to_unexplored(self, sim: "Simulation") -> None:
+        """Head for the least recently visited region among a few random candidates."""
+        rng, vision = sim.rng, self.vision(sim)
+        best, best_last = None, math.inf
+        for _ in range(6):
+            angle = rng.uniform(0, 2 * math.pi)
+            r = rng.uniform(vision, 2 * vision)
+            tx, ty = self.x + math.cos(angle) * r, self.y + math.sin(angle) * r
+            if not sim.terrain.passable(tx, ty):
+                continue
+            last = self.explored.get((int(tx) // REGION_SIZE, int(ty) // REGION_SIZE), -1)
+            if last < best_last:
+                best, best_last = (tx, ty), last
+        if best is None or not self._go_to(sim, best):
+            self._go_random(sim)
+
+    def _flee(self, sim: "Simulation", threat: tuple[float, float] | None) -> None:
+        if threat is None:
+            return
+        away = math.atan2(self.y - threat[1], self.x - threat[0])
+        dist = max(3.0, self.vision(sim) * 0.6)
+        for offset in (0.0, 0.5, -0.5, 1.0, -1.0, 1.6, -1.6):
+            a = away + offset
+            tx, ty = self.x + math.cos(a) * dist, self.y + math.sin(a) * dist
+            if sim.terrain.passable(tx, ty) and line_clear(sim.terrain, self.x, self.y, tx, ty):
+                self.path = [(tx, ty)]
+                return
+        self.path = []
 
     # ------------------------------------------------------------------ acting
 
     def act(self, sim: "Simulation") -> None:
-        tree = self.target_tree
-        if tree is not None and self._reached((tree.x, tree.y), EAT_RANGE):
-            if sim.forest.eat(tree, sim.config.fruit_regrow_ticks):
-                self.action = Action.EAT
-                self.energy = min(
-                    self.traits.max_energy,
-                    self.energy + sim.config.fruit_energy * self.traits.digestion,
-                )
-                self.fruits_eaten += 1
-            self.target_tree = None
-            self.target = None
-            return
-        mate = self.target_mate
-        if mate is not None and self._reached((mate.x, mate.y), MATE_RANGE):
-            return  # wait for the simulation to resolve the mating
-        if self.target is not None:
-            self._move_towards(self.target, sim)
+        self._moved = 0.0
+        action = self.action
 
-    def _move_towards(self, point: tuple[float, float], sim: "Simulation") -> None:
-        terrain = sim.terrain
-        dx, dy = point[0] - self.x, point[1] - self.y
-        d = math.hypot(dx, dy)
-        if d < 1e-6:
-            return
-        step = min(d, self.traits.speed / terrain.move_cost(self.x, self.y))
-        nx, ny = self.x + dx / d * step, self.y + dy / d * step
-
-        # Slide along impassable tiles by trying each axis on its own.
-        if not terrain.passable(nx, ny):
-            if terrain.passable(nx, self.y):
-                ny = self.y
-            elif terrain.passable(self.x, ny):
-                nx = self.x
-            else:
-                self.target = None
-                self.target_tree = None
-                self.target_mate = None
-                self.heading += math.pi / 2
+        if action is Action.SEEK_FOOD and self.target_tree is not None:
+            tree = self.target_tree
+            if not tree.has_fruit:
+                self._redecide = True
+                self.path.clear()
                 return
-        moved = math.hypot(nx - self.x, ny - self.y)
-        if moved > 1e-9:
-            self.heading = math.atan2(ny - self.y, nx - self.x)
-        self.x, self.y = nx, ny
-        self.energy -= moved * self.traits.move_drain
+            if math.hypot(tree.x - self.x, tree.y - self.y) <= EAT_RANGE:
+                self._eat(sim, tree)
+                return
 
-    def metabolise(self) -> None:
+        if action in (Action.SEEK_MATE, Action.SOCIALIZE):
+            other = self.target_minion
+            if other is None or not other.alive:
+                self._redecide = True
+                self.path.clear()
+                return
+            d = math.hypot(other.x - self.x, other.y - self.y)
+            close = MATE_RANGE if action is Action.SEEK_MATE else 1.5
+            if d <= close:
+                self.path.clear()
+                return  # mating is resolved by the simulation; company is just enjoyed
+            # Re-aim if the other has wandered away from where we are heading.
+            goal = self.target
+            if goal is None or math.hypot(other.x - goal[0], other.y - goal[1]) > 1.5:
+                self._go_to(sim, (other.x, other.y))
+
+        if self.path:
+            self._follow_path(sim)
+            if not self.path and action not in (Action.SEEK_MATE, Action.SOCIALIZE):
+                self._redecide = True
+
+    def _eat(self, sim: "Simulation", tree: "Tree") -> None:
+        if sim.forest.eat(tree, sim.config.fruit_regrow_ticks):
+            self.energy = min(
+                self.traits.max_energy,
+                self.energy + sim.config.fruit_energy * self.traits.digestion,
+            )
+            self.fruits_eaten += 1
+            self.action = Action.EAT
+        self.target_tree = None
+        self.path.clear()
+        self._redecide = True
+
+    def _follow_path(self, sim: "Simulation") -> None:
+        terrain = sim.terrain
+        budget = self.traits.speed / terrain.move_cost(self.x, self.y)
+        while budget > 1e-9 and self.path:
+            wx, wy = self.path[0]
+            dx, dy = wx - self.x, wy - self.y
+            d = math.hypot(dx, dy)
+            if d <= WAYPOINT_RADIUS and len(self.path) > 1:
+                self.path.pop(0)
+                continue
+            step = min(d, budget)
+            if step <= 1e-9:
+                self.path.pop(0)
+                break
+            nx, ny = self.x + dx / d * step, self.y + dy / d * step
+            if not terrain.passable(nx, ny):
+                # The world changed or we clipped a corner: plan again next tick.
+                self.path.clear()
+                self._redecide = True
+                self.heading += math.pi / 2
+                break
+            self.heading = math.atan2(dy, dx)
+            self.x, self.y = nx, ny
+            self._moved += step
+            budget -= step
+            if step >= d:
+                self.path.pop(0)
+        self.energy -= self._moved * self.traits.move_drain
+
+    # ------------------------------------------------------------------ body & needs
+
+    def metabolise(self, sim: "Simulation") -> None:
         self.age += 1
         if self.mate_cooldown > 0:
             self.mate_cooldown -= 1
-        self.energy -= self.traits.idle_drain
+
+        drain = self.traits.idle_drain
+        if self.action is Action.SLEEP:
+            drain *= SLEEP_DRAIN_FACTOR
+            self._slept += 1
+        elif self._moved == 0.0:
+            drain *= REST_DRAIN_FACTOR
+        self.energy -= drain
+        self._walked += self._moved
+
+        if (sim.tick + self.id) % NEEDS_INTERVAL == 0:
+            self._update_needs(sim, NEEDS_INTERVAL)
+
         if self.energy <= 0:
             self.energy = 0
             self.die(DeathCause.STARVATION)
         elif self.age >= self.max_age:
             self.die(DeathCause.OLD_AGE)
 
+    def _update_needs(self, sim: "Simulation", ticks: int) -> None:
+        """Advance all needs by `ticks` ticks using what happened since the last update."""
+        n, t = self.needs, self.traits
+        days = ticks / sim.config.ticks_per_day
+        slept_days = self._slept / sim.config.ticks_per_day
+        awake_days = days - slept_days
+        walked, self._walked, self._slept = self._walked, 0.0, 0
+
+        n.hunger = clamp01(self.energy_frac)
+
+        # Awake for a whole day drains rest completely; ~6 h of sleep restores it.
+        n.rest = clamp01(n.rest + 4.0 * slept_days - 1.0 * awake_days)
+
+        # Walking satisfies the urge to move, standing around (awake) builds it up.
+        walk_days = walked / t.speed / sim.config.ticks_per_day
+        idle_days = max(0.0, awake_days - walk_days)
+        n.activity = clamp01(n.activity + 10.0 * walk_days - t.restlessness * idle_days)
+
+        near = self.perception.near_count
+        if near > 0:
+            n.belonging = min(1.0, n.belonging + 2.0 * days * min(3, near))
+        else:
+            n.belonging = max(0.0, n.belonging - t.loneliness * days)
+
+        if self.can_mate(sim):
+            n.partner = max(0.0, n.partner - 2.0 * days)
+        else:
+            n.partner = min(1.0, n.partner + 2.0 * days)
+
+        n.status = max(0.0, n.status - 0.1 * days)
+
+        n.fulfilment = max(0.0, n.fulfilment - t.boredom * days)
+        region = (int(self.x) // REGION_SIZE, int(self.y) // REGION_SIZE)
+        if region != self._region:
+            self._region = region
+            last = self.explored.get(region)
+            staleness = 1.0 if last is None else min(1.0, (sim.tick - last) / sim.config.ticks_per_day / 2)
+            n.fulfilment = min(1.0, n.fulfilment + 0.25 * staleness)
+            self.explored[region] = sim.tick
+
+    def on_child_born(self) -> None:
+        self.children += 1
+        self.needs.status = min(1.0, self.needs.status + STATUS_PER_CHILD)
+        self.needs.partner = 1.0
+
     def die(self, cause: DeathCause) -> None:
         self.alive = False
         self.death_cause = cause
-        self.target_mate = None
+        self.target_minion = None
+        self.target_tree = None

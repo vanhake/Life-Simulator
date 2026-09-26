@@ -187,7 +187,7 @@ Nach jeder Phase ist das Programm lauffähig, getestet und committet.
 2. ✅ **Evolution:** Alter und Lebensspanne, sexuelle Fortpflanzung,
    Crossover/Mutation, Generationen, Stammbaum-Daten. Baumvermehrung,
    Tag/Nacht und Jahreszeiten.
-3. **Maslow-KI:** alle Bedürfnisse, Persönlichkeitsgene, Utility-Brain,
+3. ✅ **Maslow-KI:** alle Bedürfnisse, Persönlichkeitsgene, Utility-Brain,
    Schlaf, Bewegungsbedarf, Erkunden, A*-Pfadfindung.
 4. **Soziales:** Beziehungen, Gruppen, Status/Anführer, Kampf und Teilen.
 5. **Raubtiere:** Population, Jagd, Fortpflanzung, Gruppenabwehr.

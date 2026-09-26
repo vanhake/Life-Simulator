@@ -5,13 +5,19 @@ erzeugten Karte nach Früchten, folgen der Maslowschen Bedürfnispyramide,
 bilden Gruppen und entwickeln sich über Generationen weiter.
 
 Den vollständigen Umsetzungsplan beschreibt [PLAN.md](PLAN.md).
-**Aktueller Stand: Phase 2 (Evolution) abgeschlossen.**
+**Aktueller Stand: Phase 3 (Maslow-KI) abgeschlossen.**
 
 - Prozedurale Karte mit Wiese, Wald, Sumpf, Berg und Fels
 - Bäume mit je einer Frucht, die nachwächst; Bäume altern, sterben und säen sich aus
 - Tag/Nacht (nachts geringere Sicht) und Jahreszeiten (im Winter kaum Früchte)
 - Minions mit 13 Genen; sie suchen Futter, altern, suchen Partner und bekommen Kinder
 - Vererbung durch Crossover und Mutation; Stammbaum mit Eltern, Kindern und Nachkommen
+- Bedürfnisse nach Maslow: Hunger, Schlaf, Bewegung, Sicherheit, Zugehörigkeit,
+  Partnerschaft, Anerkennung, Selbstverwirklichung; höhere Stufen zählen erst, wenn
+  die unteren gedeckt sind
+- Utility-KI wählt je nach Bedürfnissen und Persönlichkeit: Futter suchen, Schlafen,
+  Ausruhen, Umherstreifen, Fliehen, Gesellschaft suchen, Partner suchen, Erkunden
+- A*-Wegsuche um Felsen herum, unter Berücksichtigung der Terrainkosten
 
 ## Installation
 
@@ -40,6 +46,7 @@ python -m lifesim --headless --ticks 100000        # ohne Grafik, gibt Kennzahle
 | `F` | Ausgewähltem Minion folgen |
 | Pos1 | Ganze Karte zeigen |
 | `R` | Neustart |
+| `H` | Hilfe ein/aus |
 
 ## Tests
 

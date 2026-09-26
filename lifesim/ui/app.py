@@ -8,6 +8,7 @@ import pygame
 
 from lifesim.agents.genome import GENE_NAMES, GENE_NAMES_DE
 from lifesim.agents.minion import DeathCause, Minion
+from lifesim.agents.needs import LEVEL_NAMES_DE
 from lifesim.config import SimConfig
 from lifesim.core.simulation import Simulation
 from lifesim.ui.camera import Camera
@@ -31,7 +32,15 @@ HELP_LINES = (
     "F          Ausgewähltem Minion folgen",
     "Pos1       Ganze Karte zeigen",
     "R          Neustart",
+    "H          Hilfe ein/aus",
 )
+
+
+def satisfaction_color(v: float) -> tuple[int, int, int]:
+    """Red (unsatisfied) through yellow to green (satisfied)."""
+    red, yellow, green = (205, 70, 60), (230, 200, 70), (90, 190, 95)
+    a, b, t = (red, yellow, v * 2) if v < 0.5 else (yellow, green, (v - 0.5) * 2)
+    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
 class App:
@@ -42,6 +51,8 @@ class App:
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("dejavusans,arial", 14)
         self.font_bold = pygame.font.SysFont("dejavusans,arial", 16, bold=True)
+        self.font_small = pygame.font.SysFont("dejavusans,arial", 12)
+        self.show_help = False
         self.config = config
         self.speed_idx = SPEEDS.index(1)
         self.paused = False
@@ -138,6 +149,8 @@ class App:
         elif key == pygame.K_HOME:
             self.follow = False
             self.cam.fit()
+        elif key == pygame.K_h:
+            self.show_help = not self.show_help
         elif key == pygame.K_f and self.selected is not None:
             self.follow = not self.follow
 
@@ -201,7 +214,8 @@ class App:
             parents = f"#{rec.parents[0]} & #{rec.parents[1]}" if rec.parents else "Gründer"
             line(f"Generation {m.generation}, Eltern: {parents}")
             line(f"Kinder: {len(rec.children)}   Nachkommen: {sim.lineage.descendant_count(m.id)}")
-            line(f"Früchte gegessen: {m.fruits_eaten}")
+            line(f"Früchte gegessen: {m.fruits_eaten}   Können: {m.skill:.0%}")
+            y = self._draw_pyramid(x, y + 4, m.needs.levels()) + 8
             for g in GENE_NAMES:
                 v = m.genome[g]
                 label = GENE_NAMES_DE[g]
@@ -215,6 +229,22 @@ class App:
             line("Klicke auf einen Minion.", color=(160, 160, 160))
             y += 8
 
-        line("Steuerung", bold=True)
-        for text in HELP_LINES:
-            line(text, color=(170, 170, 170))
+        if self.show_help or m is None:
+            line("Steuerung", bold=True)
+            for text in HELP_LINES:
+                line(text, color=(170, 170, 170))
+        else:
+            line("H: Steuerung anzeigen", color=(150, 150, 150))
+
+    def _draw_pyramid(self, x: int, y: int, levels: tuple[float, ...]) -> int:
+        """Maslow pyramid, bottom level widest, each tier coloured by its satisfaction."""
+        tier_h, gap, base_w, shrink = 17, 2, PANEL_W - 24, 34
+        top = y
+        for i in reversed(range(len(levels))):
+            w = base_w - i * shrink
+            tier_y = top + (len(levels) - 1 - i) * (tier_h + gap)
+            rect = pygame.Rect(x + (base_w - w) // 2, tier_y, w, tier_h)
+            pygame.draw.rect(self.screen, satisfaction_color(levels[i]), rect, border_radius=3)
+            label = self.font_small.render(LEVEL_NAMES_DE[i], True, (20, 20, 24))
+            self.screen.blit(label, label.get_rect(center=rect.center))
+        return top + len(levels) * (tier_h + gap)

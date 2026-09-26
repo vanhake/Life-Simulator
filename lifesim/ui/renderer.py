@@ -24,10 +24,15 @@ SAPLING_COLOR = (70, 130, 60)
 FRUIT_COLOR = (230, 60, 50)
 SELECT_COLOR = (255, 255, 255)
 ACTION_COLORS = {
+    Action.REST: None,
     Action.WANDER: None,
     Action.SEEK_FOOD: (255, 210, 60),
     Action.EAT: (255, 120, 60),
+    Action.SLEEP: (120, 140, 255),
+    Action.FLEE: (255, 40, 40),
+    Action.SOCIALIZE: (90, 230, 230),
     Action.SEEK_MATE: (255, 110, 200),
+    Action.EXPLORE: (190, 255, 120),
 }
 NIGHT_COLOR = (10, 16, 48)
 NIGHT_MAX_ALPHA = 150
@@ -109,9 +114,9 @@ class Renderer:
             vr = selected.vision(self.sim) * z
             if vr < 4000:
                 pygame.draw.circle(surface, (255, 255, 255), (sx, sy), vr, 1)
-            if selected.target is not None:
-                tx, ty = cam.world_to_screen(*selected.target)
-                pygame.draw.line(surface, (255, 255, 255), (sx, sy), (tx, ty), 1)
+            if selected.path:
+                points = [(sx, sy)] + [cam.world_to_screen(*wp) for wp in selected.path]
+                pygame.draw.lines(surface, (255, 255, 255), False, points, 1)
 
     def _draw_daylight(self, surface: pygame.Surface, cam: Camera) -> None:
         # Tint only the map itself, not the letterbox around it.

@@ -18,6 +18,7 @@ from lifesim.world.terrain import TerrainMap, generate_terrain
 from lifesim.world.trees import Forest
 
 STATS_INTERVAL = 30
+TREE_INTERVAL = 10  # trees change slowly; update them in batches
 
 
 class Simulation:
@@ -27,6 +28,7 @@ class Simulation:
         np_rng = np.random.default_rng(config.seed)
 
         self.clock = Clock(config.ticks_per_day, config.days_per_season)
+        self.clock.tick = config.ticks_per_day // 4  # start in the morning (06:00)
         self.vision_factor = 1.0  # daylight-dependent multiplier on vision, updated each tick
         self.terrain: TerrainMap = generate_terrain(config.map_width, config.map_height, np_rng)
         self.forest = Forest()
@@ -100,7 +102,8 @@ class Simulation:
         self.clock.tick += 1
         night = self.config.night_vision_factor
         self.vision_factor = night + (1.0 - night) * self.clock.daylight
-        self.forest.update(self.clock, self.config, self.terrain, self.rng)
+        if self.tick % TREE_INTERVAL == 0:
+            self.forest.update(self.clock, self.config, self.terrain, self.rng, TREE_INTERVAL)
 
         for m in self.minions:
             m.think(self)
@@ -108,7 +111,7 @@ class Simulation:
             m.act(self)
         self._resolve_mating()
         for m in self.minions:
-            m.metabolise()
+            m.metabolise(self)
 
         alive = []
         for m in self.minions:
@@ -126,7 +129,7 @@ class Simulation:
     def _resolve_mating(self) -> None:
         # Iterate over a snapshot: newborns are appended to self.minions.
         for m in list(self.minions):
-            mate = m.target_mate
+            mate = m.target_minion
             if m.action is not Action.SEEK_MATE or mate is None:
                 continue
             if len(self.minions) >= self.config.max_population:
@@ -157,10 +160,11 @@ class Simulation:
             parent.energy -= cost
             gift += cost
             parent.mate_cooldown = int(parent.traits.mate_cooldown_days * tpd)
-            parent.children += 1
-            parent.target_mate = None
-            parent.target = None
-            parent.action = Action.WANDER
+            parent.on_child_born()
+            parent.target_minion = None
+            parent.path.clear()
+            parent.action = Action.REST
+            parent._redecide = True
         child.energy = min(child.traits.max_energy, gift)
         self.births += 1
         return child

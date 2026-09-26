@@ -5,7 +5,7 @@ import numpy as np
 from lifesim.agents.genome import GENE_NAMES, Genome
 from lifesim.agents.minion import DeathCause, Minion
 from lifesim.config import SimConfig
-from lifesim.core.simulation import Simulation
+from lifesim.core.simulation import TREE_INTERVAL, Simulation
 from lifesim.ui.camera import Camera
 from lifesim.world.terrain import Terrain, TerrainMap, generate_terrain
 
@@ -83,7 +83,7 @@ def test_fruit_regrows():
     tree = sim.forest.trees[0]
     tree.has_fruit = True
     sim.forest.eat(tree, sim.config.fruit_regrow_ticks)
-    for _ in range(5):
+    for _ in range(TREE_INTERVAL):  # trees are updated in batches
         sim.step()
     assert tree.has_fruit
 
