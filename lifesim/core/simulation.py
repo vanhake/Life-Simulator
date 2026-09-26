@@ -11,6 +11,7 @@ import numpy as np
 from lifesim.agents.genome import GENE_NAMES, Genome
 from lifesim.agents.lineage import Lineage
 from lifesim.agents.minion import MATE_RANGE, Action, DeathCause, Minion
+from lifesim.agents.predator import Predator
 from lifesim.config import SimConfig
 from lifesim.core.clock import Clock
 from lifesim.core.spatial import SpatialHash
@@ -24,6 +25,7 @@ STATS_INTERVAL = 30
 TREE_INTERVAL = 10  # trees change slowly; update them in batches
 SOCIAL_INTERVAL = 60  # ticks between bonding/forgetting updates
 GROUP_INTERVAL = 240  # ticks between group re-clustering
+IMMIGRATION_CHANCE = 0.5  # per spring/summer morning while no predator is left
 
 
 class Simulation:
@@ -48,6 +50,12 @@ class Simulation:
         self.births = 0
         self.fights = 0
         self.shares = 0
+        self.predators: list[Predator] = []
+        self.predator_index: SpatialHash[Predator] = SpatialHash(cell_size=8.0)
+        self._next_predator_id = 0
+        self.kills = 0
+        self.repelled = 0
+        self.predator_births = 0
         self.deaths: Counter[DeathCause] = Counter()
         self.history: list[dict] = []
 
@@ -56,6 +64,9 @@ class Simulation:
             m = self.spawn_minion(x, y, Genome.random(self.rng))
             # Founders start as young adults of varied age so they do not all die together.
             m.age = int(self.rng.uniform(1.0, 1.6) * m.maturity)
+        for _ in range(config.initial_predators):
+            p = self.spawn_predator(*self.random_passable_point())
+            p.age = int(self.rng.uniform(0.0, 0.5) * p.max_age)
         self._rebuild_index()
         self._record_stats()
 
@@ -90,6 +101,30 @@ class Simulation:
         self.lineage.birth(m.id, parents, generation, self.tick)
         return m
 
+    def spawn_predator(self, x: float, y: float, energy_frac: float = 0.7) -> Predator:
+        cfg = self.config
+        max_age = int(cfg.predator_lifespan_days * cfg.ticks_per_day * self.rng.uniform(0.8, 1.2))
+        p = Predator(
+            self._next_predator_id,
+            x,
+            y,
+            energy=cfg.predator_max_energy * energy_frac,
+            max_energy=cfg.predator_max_energy,
+            max_age=max_age,
+            heading=self.rng.uniform(0, 2 * math.pi),
+        )
+        self._next_predator_id += 1
+        self.predators.append(p)
+        return p
+
+    def predator_at(self, x: float, y: float, radius: float = 0.8) -> Predator | None:
+        best, best_d = None, radius
+        for p in self.predators:
+            d = math.hypot(p.x - x, p.y - y)
+            if d <= best_d:
+                best, best_d = p, d
+        return best
+
     def minion_at(self, x: float, y: float, radius: float = 0.8) -> Minion | None:
         best, best_d = None, radius
         for m in self.minion_index.query_radius(x, y, radius):
@@ -104,6 +139,9 @@ class Simulation:
         self.minion_index.clear()
         for m in self.minions:
             self.minion_index.insert(m, m.x, m.y)
+        self.predator_index.clear()
+        for p in self.predators:
+            self.predator_index.insert(p, p.x, p.y)
 
     # ------------------------------------------------------------------ tick
 
@@ -120,6 +158,7 @@ class Simulation:
             m.act(self)
         self._resolve_mating()
         interactions.resolve_fights(self)
+        self._update_predators()
         for m in self.minions:
             if m.alive:  # fights may already have killed some
                 m.metabolise(self)
@@ -142,6 +181,54 @@ class Simulation:
 
         if self.tick % STATS_INTERVAL == 0:
             self._record_stats()
+
+    def _update_predators(self) -> None:
+        cfg = self.config
+        for p in self.predators:
+            p.think(self)
+        for p in self.predators:
+            p.act(self)
+        born: list[Predator] = []
+        for p in self.predators:
+            p.metabolise(self)
+            if (
+                p.alive
+                and p.energy_frac >= cfg.predator_breed_energy
+                and p.breed_cooldown <= 0
+                and len(self.predators) + len(born) < cfg.max_predators
+            ):
+                # Breeding costs the parent a good part of its reserves.
+                p.energy -= 0.4 * p.max_energy
+                p.breed_cooldown = int(cfg.predator_breed_cooldown_days * cfg.ticks_per_day)
+                child = self.spawn_predator(p.x, p.y, energy_frac=0.35)
+                self.predators.pop()  # appended below, after iterating
+                born.append(child)
+        self.predators = [p for p in self.predators if p.alive] + born
+        self.predator_births += len(born)
+
+        # Keep the food chain alive: if all predators died out, a pair may wander in from
+        # the edge of the map on any spring or summer morning.
+        clock = self.clock
+        dawn = self.tick % clock.ticks_per_day == clock.ticks_per_day // 4
+        if (
+            cfg.predator_immigration
+            and not self.predators
+            and dawn
+            and clock.season in (0, 1)
+            and self.rng.random() < IMMIGRATION_CHANCE
+        ):
+            for _ in range(2):
+                self.spawn_predator(*self._random_edge_point())
+
+    def _random_edge_point(self) -> tuple[float, float]:
+        w, h = self.terrain.width, self.terrain.height
+        for _ in range(100):
+            side = self.rng.randrange(4)
+            t = self.rng.random()
+            x, y = [(t * w, 0.5), (t * w, h - 0.5), (0.5, t * h), (w - 0.5, t * h)][side]
+            if self.terrain.passable(x, y):
+                return x, y
+        return self.random_passable_point()
 
     def _resolve_mating(self) -> None:
         # Iterate over a snapshot: newborns are appended to self.minions.
@@ -206,6 +293,10 @@ class Simulation:
             "deaths_starvation": self.deaths[DeathCause.STARVATION],
             "deaths_old_age": self.deaths[DeathCause.OLD_AGE],
             "deaths_fight": self.deaths[DeathCause.FIGHT],
+            "deaths_predator": self.deaths[DeathCause.PREDATOR],
+            "predators": len(self.predators),
+            "kills": self.kills,
+            "repelled": self.repelled,
             "fights": self.fights,
             "shares": self.shares,
             "groups": len(self.groups),

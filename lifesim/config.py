@@ -29,6 +29,20 @@ class SimConfig:
     tree_lifespan_days: float = 40.0
     tree_maturity_days: float = 2.0  # saplings bear no fruit before this age
 
+    # --- predators (a population of their own, without evolution) ---
+    initial_predators: int = 4
+    max_predators: int = 15
+    predator_speed: float = 0.08  # tiles per tick; fast minions can outrun them
+    predator_vision: float = 9.0
+    predator_max_energy: float = 300.0
+    predator_drain: float = 0.05  # energy per tick
+    predator_kill_energy: float = 90.0  # energy gained from an adult minion
+    predator_lifespan_days: float = 16.0
+    predator_breed_energy: float = 0.9  # fraction of max energy needed to breed
+    predator_breed_cooldown_days: float = 6.0
+    predator_repel_power: float = 1.6  # combined fight power of defenders that drives one off
+    predator_immigration: bool = True  # newcomers arrive in spring/summer if all died out
+
     # --- reproduction & evolution ---
     mate_energy_threshold: float = 0.7  # both partners need at least this fraction of max energy
     max_population: int = 500  # hard cap to keep the simulation responsive

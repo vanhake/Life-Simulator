@@ -14,7 +14,7 @@ from lifesim.world.terrain import TerrainMap
 
 
 def world(**overrides) -> Simulation:
-    cfg = SimConfig(seed=13, map_width=40, map_height=40, initial_minions=0)
+    cfg = SimConfig(seed=13, map_width=40, map_height=40, initial_minions=0, initial_predators=0)
     for k, v in overrides.items():
         setattr(cfg, k, v)
     sim = Simulation(cfg)
@@ -242,7 +242,7 @@ def test_sharing_moves_energy_and_builds_bond():
 
 
 def test_social_simulation_forms_groups_and_stays_consistent():
-    sim = Simulation(SimConfig(seed=4, map_width=60, map_height=45, initial_minions=60))
+    sim = Simulation(SimConfig(seed=4, map_width=60, map_height=45, initial_minions=60, initial_predators=0))
     for _ in range(sim.config.ticks_per_day * 2):
         sim.step()
     assert len(sim.groups) >= 2

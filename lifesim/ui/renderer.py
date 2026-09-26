@@ -8,6 +8,7 @@ import math
 import pygame
 
 from lifesim.agents.minion import Action, Minion
+from lifesim.agents.predator import Predator, PredatorState
 from lifesim.core.simulation import Simulation
 from lifesim.ui.camera import Camera
 from lifesim.world.terrain import Terrain
@@ -38,6 +39,12 @@ ACTION_COLORS = {
 }
 CROWN_COLOR = (255, 215, 0)
 NO_GROUP_COLOR = (150, 150, 150)
+PREDATOR_COLORS = {
+    PredatorState.HUNT: (255, 30, 30),
+    PredatorState.WANDER: (200, 40, 40),
+    PredatorState.REST: (120, 30, 30),
+    PredatorState.RETREAT: (255, 150, 40),
+}
 NIGHT_COLOR = (10, 16, 48)
 NIGHT_MAX_ALPHA = 150
 WINTER_COLOR = (225, 235, 255, 45)
@@ -122,6 +129,10 @@ class Renderer:
                 pygame.draw.circle(surface, ac, (sx + r, sy - r), max(2, r // 3))
 
         self._draw_daylight(surface, cam)
+        # Predators are drawn on top of the night tint so the viewer can follow the hunt.
+        for p in self.sim.predators:
+            if visible(p.x, p.y):
+                self._draw_predator(surface, cam, p)
 
         if selected is not None and selected.alive:
             sx, sy = cam.world_to_screen(selected.x, selected.y)
@@ -132,6 +143,21 @@ class Renderer:
             if selected.path:
                 points = [(sx, sy)] + [cam.world_to_screen(*wp) for wp in selected.path]
                 pygame.draw.lines(surface, (255, 255, 255), False, points, 1)
+
+    @staticmethod
+    def _draw_predator(surface: pygame.Surface, cam: Camera, p: Predator) -> None:
+        sx, sy = cam.world_to_screen(p.x, p.y)
+        size = max(4.0, 0.6 * cam.zoom)
+        a = p.heading
+        tip = (sx + math.cos(a) * size, sy + math.sin(a) * size)
+        left = (sx + math.cos(a + 2.5) * size * 0.8, sy + math.sin(a + 2.5) * size * 0.8)
+        right = (sx + math.cos(a - 2.5) * size * 0.8, sy + math.sin(a - 2.5) * size * 0.8)
+        pygame.draw.polygon(surface, PREDATOR_COLORS[p.state], (tip, left, right))
+        pygame.draw.polygon(surface, (20, 0, 0), (tip, left, right), 1)
+        if cam.zoom >= 10:
+            w = size * 2
+            pygame.draw.rect(surface, (40, 40, 40), (sx - size, sy - size - 6, w, 3))
+            pygame.draw.rect(surface, (230, 60, 60), (sx - size, sy - size - 6, w * p.energy_frac, 3))
 
     @staticmethod
     def _draw_crown(surface: pygame.Surface, cx: float, base_y: float, size: int) -> None:

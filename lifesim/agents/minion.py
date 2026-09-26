@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from lifesim.agents.brain import Action, Perception, choose_action
 from lifesim.agents.genome import Genome
 from lifesim.agents.needs import Needs, clamp01
-from lifesim.world.pathfinding import find_path, line_clear
+from lifesim.agents.movement import Mover
 
 if TYPE_CHECKING:
     from lifesim.core.simulation import Simulation
@@ -23,6 +23,7 @@ class DeathCause(Enum):
     STARVATION = "Verhungert"
     OLD_AGE = "Altersschwäche"
     FIGHT = "Im Kampf gestorben"
+    PREDATOR = "Gefressen"
 
 
 def lerp(lo: float, hi: float, t: float) -> float:
@@ -37,7 +38,6 @@ REST_DRAIN_FACTOR = 0.85
 EAT_RANGE = 0.6
 MATE_RANGE = 1.0
 SOCIAL_RADIUS = 4.0
-WAYPOINT_RADIUS = 0.2
 THINK_INTERVAL = 6  # ticks between regular decisions
 NEEDS_INTERVAL = 6  # ticks between need updates (applied with the accumulated time)
 REGION_SIZE = 6  # tiles per exploration memory cell
@@ -48,6 +48,7 @@ RIVAL_RADIUS = 3.0  # strangers closer than this can be challenged
 SHARE_RANGE = 1.2
 SHARE_ABOVE = 0.75  # only minions this well fed give food away ...
 NEEDY_BELOW = 0.4  # ... to friends this hungry
+PREDATOR_THREAT = 1.3  # how frightening a hunting predator is at point-blank range
 
 
 # Actions that approach another minion, and how close they need to get.
@@ -102,7 +103,7 @@ class Traits:
 
 
 @dataclass(eq=False)
-class Minion:
+class Minion(Mover):
     id: int
     x: float
     y: float
@@ -164,10 +165,6 @@ class Minion:
     def skill(self) -> float:
         """Foraging skill in [0, 1) that grows with experience."""
         return 1.0 - math.exp(-self.fruits_eaten / 25)
-
-    @property
-    def target(self) -> tuple[float, float] | None:
-        return self.path[-1] if self.path else None
 
     def vision(self, sim: "Simulation") -> float:
         return self.traits.vision * sim.vision_factor
@@ -244,6 +241,14 @@ class Minion:
                     t = (1 - d / vision) * (aggression - AGGRESSION_THREAT_MIN) * 2.5 * edge
                     if t > p.threat:
                         p.threat, p.threat_pos = t, (other.x, other.y)
+
+        for predator in sim.predator_index.query_radius(self.x, self.y, vision):
+            d = math.hypot(predator.x - self.x, predator.y - self.y)
+            if d > vision or not predator.alive:
+                continue
+            t = (1 - d / vision) * PREDATOR_THREAT * (1.0 if predator.is_dangerous else 0.4)
+            if t > p.threat:
+                p.threat, p.threat_pos = t, (predator.x, predator.y)
 
         # Company protects: nearby minions, and friends even more, soften threats.
         shelter = 0.1 * min(p.near_count, 4) + 0.1 * min(p.near_friends, 3)
@@ -323,16 +328,7 @@ class Minion:
     # ------------------------------------------------------------------ destinations
 
     def _go_to(self, sim: "Simulation", goal: tuple[float, float]) -> bool:
-        terrain = sim.terrain
-        if line_clear(terrain, self.x, self.y, goal[0], goal[1]):
-            self.path = [goal]
-            return True
-        path = find_path(terrain, (self.x, self.y), goal)
-        if path is None:
-            self.path = []
-            return False
-        self.path = path
-        return True
+        return self.go_to(sim.terrain, goal)
 
     def _go_random(self, sim: "Simulation") -> None:
         # Keep roughly the current heading so wandering looks purposeful rather than jittery.
@@ -362,17 +358,8 @@ class Minion:
             self._go_random(sim)
 
     def _flee(self, sim: "Simulation", threat: tuple[float, float] | None) -> None:
-        if threat is None:
-            return
-        away = math.atan2(self.y - threat[1], self.x - threat[0])
-        dist = max(3.0, self.vision(sim) * 0.6)
-        for offset in (0.0, 0.5, -0.5, 1.0, -1.0, 1.6, -1.6):
-            a = away + offset
-            tx, ty = self.x + math.cos(a) * dist, self.y + math.sin(a) * dist
-            if sim.terrain.passable(tx, ty) and line_clear(sim.terrain, self.x, self.y, tx, ty):
-                self.path = [(tx, ty)]
-                return
-        self.path = []
+        if threat is not None:
+            self.flee_from(sim.terrain, threat, max(3.0, self.vision(sim) * 0.6))
 
     # ------------------------------------------------------------------ acting
 
@@ -426,33 +413,11 @@ class Minion:
         self._redecide = True
 
     def _follow_path(self, sim: "Simulation") -> None:
-        terrain = sim.terrain
-        budget = self.traits.speed / terrain.move_cost(self.x, self.y)
-        while budget > 1e-9 and self.path:
-            wx, wy = self.path[0]
-            dx, dy = wx - self.x, wy - self.y
-            d = math.hypot(dx, dy)
-            if d <= WAYPOINT_RADIUS and len(self.path) > 1:
-                self.path.pop(0)
-                continue
-            step = min(d, budget)
-            if step <= 1e-9:
-                self.path.pop(0)
-                break
-            nx, ny = self.x + dx / d * step, self.y + dy / d * step
-            if not terrain.passable(nx, ny):
-                # The world changed or we clipped a corner: plan again next tick.
-                self.path.clear()
-                self._redecide = True
-                self.heading += math.pi / 2
-                break
-            self.heading = math.atan2(dy, dx)
-            self.x, self.y = nx, ny
-            self._moved += step
-            budget -= step
-            if step >= d:
-                self.path.pop(0)
-        self.energy -= self._moved * self.traits.move_drain
+        moved, blocked = self.advance(sim.terrain, self.traits.speed)
+        if blocked:
+            self._redecide = True
+        self._moved += moved
+        self.energy -= moved * self.traits.move_drain
 
     # ------------------------------------------------------------------ body & needs
 

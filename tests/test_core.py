@@ -11,7 +11,7 @@ from lifesim.world.terrain import Terrain, TerrainMap, generate_terrain
 
 
 def small_config(**overrides) -> SimConfig:
-    cfg = SimConfig(seed=7, map_width=40, map_height=30, initial_minions=15)
+    cfg = SimConfig(seed=7, map_width=40, map_height=30, initial_minions=15, initial_predators=0)
     for k, v in overrides.items():
         setattr(cfg, k, v)
     return cfg

@@ -198,11 +198,14 @@ class App:
         line(f"Minions: {len(sim.minions)}   Generation Ø {hist['mean_generation']:.1f}")
         line(f"Gruppen: {len(sim.groups)} (größte {hist['largest_group']})")
         line(f"Kämpfe: {sim.fights}   Geteilt: {sim.shares}")
+        line(f"Raubtiere: {len(sim.predators)}")
+        line(f"Gefressen: {sim.kills}   Vertrieben: {sim.repelled}")
+        d = sim.deaths
         line(
-            f"Geburten: {sim.births}   Tote: {sim.deaths[DeathCause.STARVATION]}/"
-            f"{sim.deaths[DeathCause.OLD_AGE]}/{sim.deaths[DeathCause.FIGHT]}"
+            f"Geburten: {sim.births}   Tote: {d[DeathCause.STARVATION]}/{d[DeathCause.OLD_AGE]}/"
+            f"{d[DeathCause.FIGHT]}/{d[DeathCause.PREDATOR]}"
         )
-        line("(Hunger/Alter/Kampf)", color=(150, 150, 150))
+        line("(Hunger/Alter/Kampf/Raubtier)", color=(150, 150, 150))
         line(f"Bäume: {len(sim.forest.trees)}   Früchte: {sim.forest.fruit_count()}")
         y += 6
 

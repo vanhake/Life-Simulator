@@ -22,7 +22,7 @@ def wall_map() -> TerrainMap:
 
 
 def world(tiles: TerrainMap | None = None, **overrides) -> Simulation:
-    cfg = SimConfig(seed=11, map_width=20, map_height=20, initial_minions=0)
+    cfg = SimConfig(seed=11, map_width=20, map_height=20, initial_minions=0, initial_predators=0)
     for k, v in overrides.items():
         setattr(cfg, k, v)
     sim = Simulation(cfg)
@@ -181,7 +181,7 @@ def test_visiting_new_regions_fulfils():
 
 
 def test_full_day_runs_without_errors_and_the_well_fed_sleep_at_night():
-    sim = Simulation(SimConfig(seed=2, map_width=50, map_height=40, initial_minions=40))
+    sim = Simulation(SimConfig(seed=2, map_width=50, map_height=40, initial_minions=40, initial_predators=0))
     tpd = sim.config.ticks_per_day
     while sim.tick < tpd * 2 + tpd // 24:  # 01:00 on the third day
         sim.step()

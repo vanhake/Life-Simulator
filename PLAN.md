@@ -190,7 +190,7 @@ Nach jeder Phase ist das Programm lauffähig, getestet und committet.
 3. ✅ **Maslow-KI:** alle Bedürfnisse, Persönlichkeitsgene, Utility-Brain,
    Schlaf, Bewegungsbedarf, Erkunden, A*-Pfadfindung.
 4. ✅ **Soziales:** Beziehungen, Gruppen, Status/Anführer, Kampf und Teilen.
-5. **Raubtiere:** Population, Jagd, Fortpflanzung, Gruppenabwehr.
+5. ✅ **Raubtiere:** Population, Jagd, Fortpflanzung, Gruppenabwehr.
 6. **UI komplett:** pygame_gui-Einstellungspanel, Graphen, Inspektor.
 7. **Extras:** Speichern/Laden, CSV-Export, Presets, Turbo-Modus,
    README/Bedienungsanleitung.

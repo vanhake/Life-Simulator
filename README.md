@@ -5,7 +5,7 @@ erzeugten Karte nach Früchten, folgen der Maslowschen Bedürfnispyramide,
 bilden Gruppen und entwickeln sich über Generationen weiter.
 
 Den vollständigen Umsetzungsplan beschreibt [PLAN.md](PLAN.md).
-**Aktueller Stand: Phase 4 (Soziales) abgeschlossen.**
+**Aktueller Stand: Phase 5 (Raubtiere) abgeschlossen.**
 
 - Prozedurale Karte mit Wiese, Wald, Sumpf, Berg und Fels
 - Bäume mit je einer Frucht, die nachwächst; Bäume altern, sterben und säen sich aus
@@ -24,6 +24,9 @@ Den vollständigen Umsetzungsplan beschreibt [PLAN.md](PLAN.md).
   Status) und farbigem Ring; Verbündete helfen einander im Kampf
 - Kämpfe um Früchte oder Status (Stärke, Aggression), Teilen von Futter mit hungrigen
   Freunden (Altruismus)
+- Raubtiere als eigene Population: jagen vor allem nachts einzelne und junge Minions,
+  ruhen beim Verdauen, vermehren sich bei guter Ernährung und verhungern bei
+  Beutemangel; eine Gruppe, die zusammensteht, kann sie vertreiben
 
 ## Installation
 
@@ -35,7 +38,7 @@ pip install -r requirements.txt
 
 ```bash
 python -m lifesim                                  # mit Grafik
-python -m lifesim --seed 3 --minions 100 --width 160 --height 100
+python -m lifesim --seed 3 --minions 100 --predators 6 --width 160 --height 100
 python -m lifesim --headless --ticks 100000        # ohne Grafik, gibt Kennzahlen aus
 ```
 

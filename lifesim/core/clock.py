@@ -6,7 +6,7 @@ import math
 
 SEASON_NAMES_DE = ("Frühling", "Sommer", "Herbst", "Winter")
 # How fast fruit regrows relative to the base rate.
-SEASON_FRUIT_FACTOR = (1.0, 1.4, 0.9, 0.25)
+SEASON_FRUIT_FACTOR = (1.0, 1.4, 0.9, 0.35)
 # How likely trees are to spread seeds relative to the base rate.
 SEASON_SEED_FACTOR = (1.5, 1.0, 0.4, 0.0)
 

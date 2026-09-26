@@ -12,7 +12,7 @@ from lifesim.world.terrain import Terrain, TerrainMap
 
 def empty_world(**overrides) -> Simulation:
     """A small all-grass world without trees or minions."""
-    cfg = SimConfig(seed=3, map_width=30, map_height=30, initial_minions=0)
+    cfg = SimConfig(seed=3, map_width=30, map_height=30, initial_minions=0, initial_predators=0)
     for k, v in overrides.items():
         setattr(cfg, k, v)
     sim = Simulation(cfg)
@@ -121,7 +121,7 @@ def test_night_reduces_vision():
 
 
 def test_trees_age_die_and_reseed_within_capacity():
-    cfg = SimConfig(seed=5, map_width=40, map_height=30, initial_minions=0)
+    cfg = SimConfig(seed=5, map_width=40, map_height=30, initial_minions=0, initial_predators=0)
     sim = Simulation(cfg)
     forest = sim.forest
     for _ in range(cfg.ticks_per_day * 30):
@@ -137,7 +137,7 @@ def test_trees_age_die_and_reseed_within_capacity():
 
 
 def test_saplings_bear_fruit_only_when_mature():
-    cfg = SimConfig(seed=5, map_width=20, map_height=20, initial_minions=0, tree_maturity_days=1)
+    cfg = SimConfig(seed=5, map_width=20, map_height=20, initial_minions=0, initial_predators=0, tree_maturity_days=1)
     sim = Simulation(cfg)
     forest = sim.forest
     tile = next(
@@ -153,7 +153,7 @@ def test_saplings_bear_fruit_only_when_mature():
 
 
 def test_winter_slows_fruit_regrowth():
-    cfg = SimConfig(seed=5, map_width=20, map_height=20, initial_minions=0, fruit_regrow_ticks=100)
+    cfg = SimConfig(seed=5, map_width=20, map_height=20, initial_minions=0, initial_predators=0, fruit_regrow_ticks=100)
     results = {}
     for season in (1, 3):  # summer, winter
         sim = Simulation(cfg)

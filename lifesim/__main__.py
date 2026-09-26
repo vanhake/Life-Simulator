@@ -12,6 +12,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="lifesim", description="Simulator für Leben und Evolution")
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--minions", type=int, default=None, help="Startanzahl Minions")
+    p.add_argument("--predators", type=int, default=None, help="Startanzahl Raubtiere")
     p.add_argument("--width", type=int, default=None, help="Kartenbreite in Kacheln")
     p.add_argument("--height", type=int, default=None, help="Kartenhöhe in Kacheln")
     p.add_argument("--headless", action="store_true", help="Ohne Grafik laufen lassen")
@@ -25,6 +26,8 @@ def build_config(args: argparse.Namespace) -> SimConfig:
         cfg.seed = args.seed
     if args.minions is not None:
         cfg.initial_minions = args.minions
+    if args.predators is not None:
+        cfg.initial_predators = args.predators
     if args.width is not None:
         cfg.map_width = args.width
     if args.height is not None:
@@ -45,6 +48,7 @@ def run_headless(cfg: SimConfig, ticks: int) -> None:
             row = sim.history[-1]
             print(
                 f"Tag {sim.clock.day:>4} {sim.clock.season_name:<8} pop {len(sim.minions):>4}  "
+                f"Raubtiere {len(sim.predators):>2}  Gruppen {row['groups']:>3}  "
                 f"gen {row['mean_generation']:5.1f}  Bäume {row['trees']:>4}  "
                 f"Früchte {row['fruits']:>4}  speed {row['gene_speed']:.2f}  "
                 f"vision {row['gene_vision']:.2f}  energy {row['gene_max_energy']:.2f}  "
@@ -56,7 +60,8 @@ def run_headless(cfg: SimConfig, ticks: int) -> None:
     elapsed = time.perf_counter() - start
     print(
         f"Geburten {sim.births}, verhungert {sim.deaths[DeathCause.STARVATION]}, "
-        f"Altersschwäche {sim.deaths[DeathCause.OLD_AGE]}"
+        f"Altersschwäche {sim.deaths[DeathCause.OLD_AGE]}, Kampf {sim.deaths[DeathCause.FIGHT]}, "
+        f"gefressen {sim.deaths[DeathCause.PREDATOR]}, Raubtiere vertrieben {sim.repelled}"
     )
     print(f"{sim.tick} Ticks in {elapsed:.1f}s ({sim.tick / max(elapsed, 1e-9):.0f} Ticks/s)")
 
