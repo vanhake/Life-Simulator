@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import time
+
 import pygame
 
 from lifesim.agents.genome import GENE_NAMES, GENE_NAMES_DE
-from lifesim.agents.minion import Minion
+from lifesim.agents.minion import DeathCause, Minion
 from lifesim.config import SimConfig
 from lifesim.core.simulation import Simulation
 from lifesim.ui.camera import Camera
@@ -15,6 +17,8 @@ PANEL_W = 300
 SPEEDS = (0.25, 0.5, 1, 2, 4, 8, 16, 32, 64)
 FPS = 60
 PAN_SPEED_PX = 12
+# Max wall time per frame spent simulating, so high speeds degrade gracefully instead of freezing.
+SIM_BUDGET_S = 0.030
 
 HELP_LINES = (
     "Leertaste  Pause / Weiter",
@@ -42,6 +46,9 @@ class App:
         self.speed_idx = SPEEDS.index(1)
         self.paused = False
         self._tick_accum = 0.0
+        self._ticks_this_second = 0
+        self._tps_window_start = time.perf_counter()
+        self.actual_tps = 0.0
         self.follow = False
         self._dragging = False
         self.restart()
@@ -80,9 +87,19 @@ class App:
         if self.paused:
             return
         self._tick_accum += SPEEDS[self.speed_idx]
+        deadline = time.perf_counter() + SIM_BUDGET_S
         while self._tick_accum >= 1:
             self._tick_accum -= 1
             self.sim.step()
+            self._ticks_this_second += 1
+            if time.perf_counter() > deadline:
+                self._tick_accum = 0.0  # drop the backlog instead of accumulating lag
+                break
+        now = time.perf_counter()
+        if now - self._tps_window_start >= 1.0:
+            self.actual_tps = self._ticks_this_second / (now - self._tps_window_start)
+            self._ticks_this_second = 0
+            self._tps_window_start = now
         if self.selected is not None and not self.selected.alive:
             self.follow = False
 
@@ -155,21 +172,35 @@ class App:
             y += font.get_linesize() + 2
 
         sim = self.sim
+        clock = sim.clock
         speed = SPEEDS[self.speed_idx]
+        hist = sim.history[-1]
         line("Life-Simulator", bold=True)
-        line(f"Tick: {sim.tick}")
-        line(f"Tempo: {speed:g}x" + ("  (PAUSE)" if self.paused else ""))
-        line(f"FPS: {self.clock.get_fps():.0f}")
-        line(f"Minions: {len(sim.minions)}   Tote: {sim.deaths}")
+        line(f"Tag {clock.day + 1}, {clock.clock_text()} Uhr  ({'Nacht' if clock.is_night else 'Tag'})")
+        line(f"{clock.season_name}, Jahr {clock.year + 1}")
+        line(f"Tempo: {speed:g}x  ({self.actual_tps:.0f} Ticks/s)" + ("  PAUSE" if self.paused else ""))
+        line(f"Minions: {len(sim.minions)}   Generation Ø {hist['mean_generation']:.1f}")
+        line(f"Geburten: {sim.births}")
+        line(
+            f"Tote: {sim.deaths[DeathCause.STARVATION]} verhungert, "
+            f"{sim.deaths[DeathCause.OLD_AGE]} Alter"
+        )
         line(f"Bäume: {len(sim.forest.trees)}   Früchte: {sim.forest.fruit_count()}")
         y += 8
 
         m = self.selected
         if m is not None:
-            line(f"Minion #{m.id}" + ("" if m.alive else " (tot)"), bold=True)
+            tpd = sim.config.ticks_per_day
+            rec = sim.lineage[m.id]
+            status = "" if m.alive else f" (tot: {m.death_cause.value})"
+            line(f"Minion #{m.id}{status}", bold=True)
             line(f"Aktion: {m.action.value}")
             line(f"Energie: {m.energy:.0f} / {m.traits.max_energy:.0f}")
-            line(f"Alter: {m.age}   Generation: {m.generation}")
+            stage = "erwachsen" if m.is_adult else "jung"
+            line(f"Alter: {m.age / tpd:.1f} / {m.max_age / tpd:.1f} Tage ({stage})")
+            parents = f"#{rec.parents[0]} & #{rec.parents[1]}" if rec.parents else "Gründer"
+            line(f"Generation {m.generation}, Eltern: {parents}")
+            line(f"Kinder: {len(rec.children)}   Nachkommen: {sim.lineage.descendant_count(m.id)}")
             line(f"Früchte gegessen: {m.fruits_eaten}")
             for g in GENE_NAMES:
                 v = m.genome[g]

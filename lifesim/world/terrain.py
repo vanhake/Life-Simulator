@@ -44,6 +44,9 @@ NAMES_DE: dict[Terrain, str] = {
 }
 
 
+_INF = float("inf")
+
+
 class TerrainMap:
     def __init__(self, tiles: np.ndarray) -> None:
         self.tiles = tiles  # shape (height, width), dtype uint8
@@ -53,6 +56,8 @@ class TerrainMap:
             if c is not None:
                 cost[tiles == t] = c
         self.cost = cost
+        # Plain nested lists: scalar lookups are far cheaper than numpy indexing in hot loops.
+        self._cost_rows: list[list[float]] = cost.tolist()
 
     def in_bounds(self, x: float, y: float) -> bool:
         return 0 <= x < self.width and 0 <= y < self.height
@@ -61,10 +66,10 @@ class TerrainMap:
         return Terrain(int(self.tiles[int(y), int(x)]))
 
     def passable(self, x: float, y: float) -> bool:
-        return self.in_bounds(x, y) and self.cost[int(y), int(x)] != np.inf
+        return 0 <= x < self.width and 0 <= y < self.height and self._cost_rows[int(y)][int(x)] != _INF
 
     def move_cost(self, x: float, y: float) -> float:
-        return float(self.cost[int(y), int(x)])
+        return self._cost_rows[int(y)][int(x)]
 
 
 def generate_terrain(width: int, height: int, rng: np.random.Generator) -> TerrainMap:

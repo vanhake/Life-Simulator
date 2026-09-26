@@ -1,4 +1,4 @@
-"""Minion state, gene-derived traits and the phase-1 behaviour (forage / wander)."""
+"""Minion state, gene-derived traits and the phase-2 behaviour (forage / mate / wander)."""
 
 from __future__ import annotations
 
@@ -19,6 +19,12 @@ class Action(Enum):
     WANDER = "Umherstreifen"
     SEEK_FOOD = "Futter suchen"
     EAT = "Essen"
+    SEEK_MATE = "Partner suchen"
+
+
+class DeathCause(Enum):
+    STARVATION = "Verhungert"
+    OLD_AGE = "Altersschwäche"
 
 
 def lerp(lo: float, hi: float, t: float) -> float:
@@ -29,19 +35,24 @@ def lerp(lo: float, hi: float, t: float) -> float:
 BASE_DRAIN = 0.02
 MOVE_DRAIN_PER_TILE = 0.25
 EAT_RANGE = 0.6
+MATE_RANGE = 1.0
 
 
 @dataclass(frozen=True)
 class Traits:
-    """Real-valued traits derived once from the genome."""
+    """Real-valued traits derived once from the genome. Durations are in days."""
 
     speed: float  # tiles per tick on cost-1 terrain
     max_energy: float
-    vision: float  # tiles
+    vision: float  # tiles, in daylight
     idle_drain: float  # energy per tick
     move_drain: float  # energy per tile travelled
     digestion: float  # multiplier on fruit energy
-    size: float  # visual radius in tiles
+    size: float  # visual radius in tiles when fully grown
+    lifespan_days: float
+    maturity_days: float  # long-lived minions mature later
+    mate_cooldown_days: float
+    child_cost: float  # fraction of own max energy given to each child
 
     @classmethod
     def from_genome(cls, g: Genome) -> "Traits":
@@ -56,6 +67,10 @@ class Traits:
             * (0.5 + 1.5 * g["speed"] ** 2 + 0.5 * g["max_energy"] + 0.4 * g["strength"]),
             digestion=lerp(0.8, 1.2, g["metabolism"]),
             size=lerp(0.25, 0.45, g["strength"]),
+            lifespan_days=lerp(6.0, 14.0, g["lifespan"]),
+            maturity_days=lerp(1.2, 2.4, g["lifespan"]),
+            mate_cooldown_days=lerp(1.5, 0.5, g["fertility"]),
+            child_cost=lerp(0.2, 0.35, g["fertility"]),
         )
 
 
@@ -65,16 +80,23 @@ class Minion:
     x: float
     y: float
     genome: Genome
+    generation: int = 0
+    parents: tuple[int, int] | None = None
+    age: int = 0
+    max_age: int = 10**9  # ticks; set by the simulation from traits and ticks_per_day
+    maturity: int = 0  # ticks
     traits: Traits = field(init=False)
     energy: float = field(init=False)
-    age: int = 0
-    generation: int = 0
     alive: bool = True
+    death_cause: DeathCause | None = None
     action: Action = Action.WANDER
     target: tuple[float, float] | None = None
     target_tree: "Tree | None" = None
+    target_mate: "Minion | None" = None
+    mate_cooldown: int = 0
     heading: float = 0.0
     fruits_eaten: int = 0
+    children: int = 0
 
     def __post_init__(self) -> None:
         self.traits = Traits.from_genome(self.genome)
@@ -84,13 +106,45 @@ class Minion:
     def energy_frac(self) -> float:
         return self.energy / self.traits.max_energy
 
+    @property
+    def is_adult(self) -> bool:
+        return self.age >= self.maturity
+
+    @property
+    def growth(self) -> float:
+        """0.5 at birth, 1.0 once mature; used for drawing."""
+        if self.maturity <= 0:
+            return 1.0
+        return min(1.0, 0.5 + 0.5 * self.age / self.maturity)
+
+    def vision(self, sim: "Simulation") -> float:
+        return self.traits.vision * sim.vision_factor
+
+    def can_mate(self, sim: "Simulation") -> bool:
+        return (
+            self.alive
+            and self.is_adult
+            and self.mate_cooldown <= 0
+            and self.energy_frac >= sim.config.mate_energy_threshold
+        )
+
+    def is_close_kin(self, other: "Minion") -> bool:
+        """Parents, children and siblings (incl. half-siblings) do not mate."""
+        if self.parents and other.id in self.parents:
+            return True
+        if other.parents and self.id in other.parents:
+            return True
+        return bool(self.parents and other.parents and set(self.parents) & set(other.parents))
+
     # ------------------------------------------------------------------ decision
 
     def think(self, sim: "Simulation") -> None:
-        hungry = self.energy_frac < sim.config.hunger_threshold
-        if hungry:
+        vision = self.vision(sim)
+
+        if self.energy_frac < sim.config.hunger_threshold:
+            self.target_mate = None
             if self.target_tree is None or not self.target_tree.has_fruit:
-                self.target_tree = self._find_fruit(sim)
+                self.target_tree = self._find_fruit(sim, vision)
             if self.target_tree is not None:
                 self.action = Action.SEEK_FOOD
                 self.target = (self.target_tree.x, self.target_tree.y)
@@ -98,13 +152,27 @@ class Minion:
         else:
             self.target_tree = None
 
+        if self.can_mate(sim) and len(sim.minions) < sim.config.max_population:
+            mate = self.target_mate
+            if mate is None or not mate.can_mate(sim):
+                mate = self._find_mate(sim, vision)
+            self.target_mate = mate
+            if mate is not None:
+                self.action = Action.SEEK_MATE
+                self.target = (mate.x, mate.y)
+                return
+        else:
+            self.target_mate = None
+
+        if self.action is not Action.WANDER:
+            self.target = None
         self.action = Action.WANDER
         if self.target is None or self._reached(self.target, 0.3):
-            self.target = self._random_destination(sim.terrain, sim.rng)
+            self.target = self._random_destination(sim.terrain, sim.rng, vision)
 
-    def _find_fruit(self, sim: "Simulation") -> "Tree | None":
-        best, best_d = None, self.traits.vision
-        for tree in sim.forest.index.query_radius(self.x, self.y, self.traits.vision):
+    def _find_fruit(self, sim: "Simulation", vision: float) -> "Tree | None":
+        best, best_d = None, vision
+        for tree in sim.forest.index.query_radius(self.x, self.y, vision):
             if not tree.has_fruit:
                 continue
             d = math.hypot(tree.x - self.x, tree.y - self.y)
@@ -112,11 +180,23 @@ class Minion:
                 best, best_d = tree, d
         return best
 
-    def _random_destination(self, terrain, rng: random.Random) -> tuple[float, float] | None:
+    def _find_mate(self, sim: "Simulation", vision: float) -> "Minion | None":
+        best, best_d = None, vision
+        for other in sim.minion_index.query_radius(self.x, self.y, vision):
+            if other is self or not other.can_mate(sim) or self.is_close_kin(other):
+                continue
+            d = math.hypot(other.x - self.x, other.y - self.y)
+            if d <= best_d:
+                best, best_d = other, d
+        return best
+
+    def _random_destination(
+        self, terrain, rng: random.Random, vision: float
+    ) -> tuple[float, float] | None:
         # Keep roughly the current heading so wandering looks purposeful rather than jittery.
         for _ in range(8):
             self.heading += rng.uniform(-1.2, 1.2)
-            r = rng.uniform(2.0, self.traits.vision)
+            r = rng.uniform(2.0, max(2.0, vision))
             tx = self.x + math.cos(self.heading) * r
             ty = self.y + math.sin(self.heading) * r
             if terrain.passable(tx, ty):
@@ -141,6 +221,9 @@ class Minion:
             self.target_tree = None
             self.target = None
             return
+        mate = self.target_mate
+        if mate is not None and self._reached((mate.x, mate.y), MATE_RANGE):
+            return  # wait for the simulation to resolve the mating
         if self.target is not None:
             self._move_towards(self.target, sim)
 
@@ -162,6 +245,7 @@ class Minion:
             else:
                 self.target = None
                 self.target_tree = None
+                self.target_mate = None
                 self.heading += math.pi / 2
                 return
         moved = math.hypot(nx - self.x, ny - self.y)
@@ -172,7 +256,16 @@ class Minion:
 
     def metabolise(self) -> None:
         self.age += 1
+        if self.mate_cooldown > 0:
+            self.mate_cooldown -= 1
         self.energy -= self.traits.idle_drain
         if self.energy <= 0:
             self.energy = 0
-            self.alive = False
+            self.die(DeathCause.STARVATION)
+        elif self.age >= self.max_age:
+            self.die(DeathCause.OLD_AGE)
+
+    def die(self, cause: DeathCause) -> None:
+        self.alive = False
+        self.death_cause = cause
+        self.target_mate = None

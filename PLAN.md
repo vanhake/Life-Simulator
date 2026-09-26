@@ -180,11 +180,11 @@ Rauschen. Hysterese verhindert ständiges Umentscheiden.
 
 Nach jeder Phase ist das Programm lauffähig, getestet und committet.
 
-1. **Fundament:** Projektstruktur, Config, RNG/Seed, Noise-Terrain, Bäume mit
+1. ✅ **Fundament:** Projektstruktur, Config, RNG/Seed, Noise-Terrain, Bäume mit
    nachwachsender Frucht, Minions mit Körpergenen, Hunger/Energie, Suchen und
    Essen von Früchten, Bewegung mit Terrainkosten, Tod durch Hunger. Rendering
    mit Kamera, Pause und Tempo. Tests für den Kern.
-2. **Evolution:** Alter und Lebensspanne, sexuelle Fortpflanzung,
+2. ✅ **Evolution:** Alter und Lebensspanne, sexuelle Fortpflanzung,
    Crossover/Mutation, Generationen, Stammbaum-Daten. Baumvermehrung,
    Tag/Nacht und Jahreszeiten.
 3. **Maslow-KI:** alle Bedürfnisse, Persönlichkeitsgene, Utility-Brain,

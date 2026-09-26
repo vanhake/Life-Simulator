@@ -3,7 +3,7 @@ import random
 import numpy as np
 
 from lifesim.agents.genome import GENE_NAMES, Genome
-from lifesim.agents.minion import Minion
+from lifesim.agents.minion import DeathCause, Minion
 from lifesim.config import SimConfig
 from lifesim.core.simulation import Simulation
 from lifesim.ui.camera import Camera
@@ -99,8 +99,9 @@ def test_minion_starves_without_food():
     for _ in range(200):
         sim.step()
     assert not m.alive
+    assert m.death_cause is DeathCause.STARVATION
     assert sim.minions == []
-    assert sim.deaths == 1
+    assert sim.deaths[DeathCause.STARVATION] == 1
 
 
 def test_faster_minions_burn_more_per_tile():

@@ -20,13 +20,18 @@ TERRAIN_COLORS = {
     Terrain.ROCK: (88, 84, 82),
 }
 TREE_COLOR = (34, 88, 36)
+SAPLING_COLOR = (70, 130, 60)
 FRUIT_COLOR = (230, 60, 50)
 SELECT_COLOR = (255, 255, 255)
 ACTION_COLORS = {
     Action.WANDER: None,
     Action.SEEK_FOOD: (255, 210, 60),
     Action.EAT: (255, 120, 60),
+    Action.SEEK_MATE: (255, 110, 200),
 }
+NIGHT_COLOR = (10, 16, 48)
+NIGHT_MAX_ALPHA = 150
+WINTER_COLOR = (225, 235, 255, 45)
 
 TERRAIN_TILE_PX = 8  # resolution of the cached terrain image
 
@@ -69,6 +74,9 @@ class Renderer:
             if not visible(tree.x, tree.y):
                 continue
             sx, sy = cam.world_to_screen(tree.x, tree.y)
+            if tree.is_sapling:
+                pygame.draw.circle(surface, SAPLING_COLOR, (sx, sy), max(1, tree_r // 2))
+                continue
             pygame.draw.circle(surface, TREE_COLOR, (sx, sy), tree_r)
             if tree.has_fruit:
                 pygame.draw.circle(surface, FRUIT_COLOR, (sx + tree_r * 0.3, sy - tree_r * 0.3), fruit_r)
@@ -77,7 +85,7 @@ class Renderer:
             if not visible(m.x, m.y):
                 continue
             sx, sy = cam.world_to_screen(m.x, m.y)
-            r = max(3, int(m.traits.size * z))
+            r = max(2 if m.is_adult else 1, int(m.traits.size * m.growth * z)) + 1
             pygame.draw.circle(surface, minion_color(m), (sx, sy), r)
             pygame.draw.circle(surface, (15, 15, 15), (sx, sy), r, 1)
             if z >= 10:
@@ -93,15 +101,38 @@ class Renderer:
             if ac is not None:
                 pygame.draw.circle(surface, ac, (sx + r, sy - r), max(2, r // 3))
 
+        self._draw_daylight(surface, cam)
+
         if selected is not None and selected.alive:
             sx, sy = cam.world_to_screen(selected.x, selected.y)
             pygame.draw.circle(surface, SELECT_COLOR, (sx, sy), max(4, int(selected.traits.size * z) + 4), 2)
-            vr = selected.traits.vision * z
+            vr = selected.vision(self.sim) * z
             if vr < 4000:
                 pygame.draw.circle(surface, (255, 255, 255), (sx, sy), vr, 1)
             if selected.target is not None:
                 tx, ty = cam.world_to_screen(*selected.target)
                 pygame.draw.line(surface, (255, 255, 255), (sx, sy), (tx, ty), 1)
+
+    def _draw_daylight(self, surface: pygame.Surface, cam: Camera) -> None:
+        # Tint only the map itself, not the letterbox around it.
+        x0, y0 = cam.world_to_screen(0, 0)
+        x1, y1 = cam.world_to_screen(self.sim.terrain.width, self.sim.terrain.height)
+        area = pygame.Rect(round(x0), round(y0), round(x1 - x0), round(y1 - y0)).clip(
+            surface.get_rect()
+        )
+        if area.w <= 0 or area.h <= 0:
+            return
+        clock = self.sim.clock
+        tints = []
+        if clock.season == 3:
+            tints.append(WINTER_COLOR)
+        alpha = int((1.0 - clock.daylight) * NIGHT_MAX_ALPHA)
+        if alpha > 0:
+            tints.append((*NIGHT_COLOR, alpha))
+        for color in tints:
+            overlay = pygame.Surface(area.size, pygame.SRCALPHA)
+            overlay.fill(color)
+            surface.blit(overlay, area.topleft)
 
     def _draw_terrain(self, surface: pygame.Surface, cam: Camera) -> None:
         vx, vy, vw, vh = cam.visible_rect()
