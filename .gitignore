@@ -5,3 +5,6 @@ __pycache__/
 saves/
 exports/
 /presets/
+build/
+dist/
+*.spec
