@@ -29,6 +29,8 @@ class Action(Enum):
     SOCIALIZE = "Gesellschaft suchen"
     SEEK_MATE = "Partner suchen"
     EXPLORE = "Erkunden"
+    FIGHT = "Kämpfen"
+    SHARE = "Teilen"
 
 
 REST_BASELINE = 0.1
@@ -40,9 +42,13 @@ NOISE = 0.04
 class Perception:
     fruit: "Tree | None" = None
     mate: "Minion | None" = None
-    nearest_other: "Minion | None" = None
+    nearest_other: "Minion | None" = None  # preferred company: leader, friend or anyone
     nearest_other_dist: float = float("inf")
     near_count: int = 0  # minions within social radius
+    near_friends: int = 0  # friends, kin or group mates within social radius
+    rival: "Minion | None" = None  # a stranger close enough to pick a fight with
+    rival_over_food: bool = False  # the rival is after the same fruit
+    needy_friend: "Minion | None" = None  # a hungry friend this minion could feed
     threat: float = 0.0  # 0..1
     threat_pos: tuple[float, float] | None = None
     scores: dict[Action, float] = field(default_factory=dict)
@@ -84,6 +90,21 @@ def score_actions(m: "Minion", sim: "Simulation", p: Perception) -> dict[Action,
         s[Action.SOCIALIZE] = (1 - n.belonging) * lerp(0.2, 1.0, g["sociability"]) * gate3
     if p.mate is not None:
         s[Action.SEEK_MATE] = (1 - n.partner) * lerp(0.6, 1.0, g["fertility"]) * gate3 + 0.1
+
+    # Levels 1 & 4: fighting – over contested food, or to gain status (esteem).
+    if p.rival is not None:
+        aggression = g["aggression"]
+        edge = g["strength"] - p.rival.genome["strength"] + 0.3 * aggression
+        if edge > 0:
+            fight = (1 - n.status) * aggression**2 * n.gate(4) * 0.6
+            if p.rival_over_food:
+                fight += hunger * aggression * 1.2
+            s[Action.FIGHT] = fight
+
+    # Levels 3 & 4: sharing food with a hungry friend strengthens bonds and status.
+    if p.needy_friend is not None:
+        need = 1 - p.needy_friend.energy_frac
+        s[Action.SHARE] = g["altruism"] * need * gate3 * 0.9 + (1 - n.status) * 0.1
 
     # Level 5: self-actualisation.
     s[Action.EXPLORE] = (1 - n.fulfilment) * lerp(0.1, 0.9, g["curiosity"]) * n.gate(5)

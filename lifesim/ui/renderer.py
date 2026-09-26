@@ -33,7 +33,11 @@ ACTION_COLORS = {
     Action.SOCIALIZE: (90, 230, 230),
     Action.SEEK_MATE: (255, 110, 200),
     Action.EXPLORE: (190, 255, 120),
+    Action.FIGHT: (255, 0, 0),
+    Action.SHARE: (120, 255, 160),
 }
+CROWN_COLOR = (255, 215, 0)
+NO_GROUP_COLOR = (150, 150, 150)
 NIGHT_COLOR = (10, 16, 48)
 NIGHT_MAX_ALPHA = 150
 WINTER_COLOR = (225, 235, 255, 45)
@@ -53,6 +57,7 @@ def minion_color(m: Minion) -> tuple[int, int, int]:
 class Renderer:
     def __init__(self, sim: Simulation) -> None:
         self.sim = sim
+        self.color_by_group = False  # colour minions by group instead of by genes
         self.terrain_surface = self._build_terrain_surface()
 
     def _build_terrain_surface(self) -> pygame.Surface:
@@ -86,13 +91,23 @@ class Renderer:
             if tree.has_fruit:
                 pygame.draw.circle(surface, FRUIT_COLOR, (sx + tree_r * 0.3, sy - tree_r * 0.3), fruit_r)
 
+        groups = self.sim.groups
         for m in self.sim.minions:
             if not visible(m.x, m.y):
                 continue
             sx, sy = cam.world_to_screen(m.x, m.y)
             r = max(2 if m.is_adult else 1, int(m.traits.size * m.growth * z)) + 1
-            pygame.draw.circle(surface, minion_color(m), (sx, sy), r)
+            group = groups.get(m.group_id)
+            if group is not None:
+                pygame.draw.circle(surface, group.color, (sx, sy), r + 2, 2)
+            if self.color_by_group:
+                body = group.color if group is not None else NO_GROUP_COLOR
+            else:
+                body = minion_color(m)
+            pygame.draw.circle(surface, body, (sx, sy), r)
             pygame.draw.circle(surface, (15, 15, 15), (sx, sy), r, 1)
+            if group is not None and group.leader == m.id:
+                self._draw_crown(surface, sx, sy - r - 7, max(3, r))
             if z >= 10:
                 # heading tick
                 hx = sx + math.cos(m.heading) * r
@@ -102,7 +117,7 @@ class Renderer:
                 w = r * 2
                 pygame.draw.rect(surface, (40, 40, 40), (sx - r, sy - r - 5, w, 3))
                 pygame.draw.rect(surface, (80, 220, 90), (sx - r, sy - r - 5, w * m.energy_frac, 3))
-            ac = ACTION_COLORS[m.action]
+            ac = ACTION_COLORS.get(m.action)
             if ac is not None:
                 pygame.draw.circle(surface, ac, (sx + r, sy - r), max(2, r // 3))
 
@@ -117,6 +132,17 @@ class Renderer:
             if selected.path:
                 points = [(sx, sy)] + [cam.world_to_screen(*wp) for wp in selected.path]
                 pygame.draw.lines(surface, (255, 255, 255), False, points, 1)
+
+    @staticmethod
+    def _draw_crown(surface: pygame.Surface, cx: float, base_y: float, size: int) -> None:
+        w, h = size * 1.4, size * 0.9
+        left, right = cx - w / 2, cx + w / 2
+        points = [
+            (left, base_y), (left, base_y - h), (cx - w / 4, base_y - h / 2),
+            (cx, base_y - h), (cx + w / 4, base_y - h / 2), (right, base_y - h), (right, base_y),
+        ]  # fmt: skip
+        pygame.draw.polygon(surface, CROWN_COLOR, points)
+        pygame.draw.polygon(surface, (60, 45, 0), points, 1)
 
     def _draw_daylight(self, surface: pygame.Surface, cam: Camera) -> None:
         # Tint only the map itself, not the letterbox around it.

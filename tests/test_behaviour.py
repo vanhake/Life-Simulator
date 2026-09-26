@@ -180,11 +180,13 @@ def test_visiting_new_regions_fulfils():
     assert first > 0 and m.needs.fulfilment > first
 
 
-def test_full_day_runs_without_errors_and_everyone_sleeps_at_night():
+def test_full_day_runs_without_errors_and_the_well_fed_sleep_at_night():
     sim = Simulation(SimConfig(seed=2, map_width=50, map_height=40, initial_minions=40))
     tpd = sim.config.ticks_per_day
     while sim.tick < tpd * 2 + tpd // 24:  # 01:00 on the third day
         sim.step()
-    sleeping = sum(m.action is Action.SLEEP for m in sim.minions)
-    assert sleeping >= 0.7 * len(sim.minions)
+    # Hungry minions may forage at night, everyone else should be asleep.
+    fed = [m for m in sim.minions if m.energy_frac > 0.6]
+    assert fed
+    assert sum(m.action is Action.SLEEP for m in fed) >= 0.9 * len(fed)
     assert all(sim.terrain.passable(m.x, m.y) for m in sim.minions)

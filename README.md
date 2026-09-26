@@ -5,7 +5,7 @@ erzeugten Karte nach Früchten, folgen der Maslowschen Bedürfnispyramide,
 bilden Gruppen und entwickeln sich über Generationen weiter.
 
 Den vollständigen Umsetzungsplan beschreibt [PLAN.md](PLAN.md).
-**Aktueller Stand: Phase 3 (Maslow-KI) abgeschlossen.**
+**Aktueller Stand: Phase 4 (Soziales) abgeschlossen.**
 
 - Prozedurale Karte mit Wiese, Wald, Sumpf, Berg und Fels
 - Bäume mit je einer Frucht, die nachwächst; Bäume altern, sterben und säen sich aus
@@ -18,6 +18,12 @@ Den vollständigen Umsetzungsplan beschreibt [PLAN.md](PLAN.md).
 - Utility-KI wählt je nach Bedürfnissen und Persönlichkeit: Futter suchen, Schlafen,
   Ausruhen, Umherstreifen, Fliehen, Gesellschaft suchen, Partner suchen, Erkunden
 - A*-Wegsuche um Felsen herum, unter Berücksichtigung der Terrainkosten
+- Beziehungen entstehen durch gemeinsame Zeit, Verwandtschaft und Teilen; Kämpfe
+  schaffen Feindschaft; alles verblasst, wenn es nicht erneuert wird
+- Gruppen bilden sich von selbst aus starken Freundschaften, mit Anführer (höchster
+  Status) und farbigem Ring; Verbündete helfen einander im Kampf
+- Kämpfe um Früchte oder Status (Stärke, Aggression), Teilen von Futter mit hungrigen
+  Freunden (Altruismus)
 
 ## Installation
 
@@ -46,6 +52,7 @@ python -m lifesim --headless --ticks 100000        # ohne Grafik, gibt Kennzahle
 | `F` | Ausgewähltem Minion folgen |
 | Pos1 | Ganze Karte zeigen |
 | `R` | Neustart |
+| `G` | Minions nach Genen oder nach Gruppe einfärben |
 | `H` | Hilfe ein/aus |
 
 ## Tests

@@ -32,6 +32,7 @@ HELP_LINES = (
     "F          Ausgewähltem Minion folgen",
     "Pos1       Ganze Karte zeigen",
     "R          Neustart",
+    "G          Farbe: Gene / Gruppe",
     "H          Hilfe ein/aus",
 )
 
@@ -149,6 +150,8 @@ class App:
         elif key == pygame.K_HOME:
             self.follow = False
             self.cam.fit()
+        elif key == pygame.K_g:
+            self.renderer.color_by_group = not self.renderer.color_by_group
         elif key == pygame.K_h:
             self.show_help = not self.show_help
         elif key == pygame.K_f and self.selected is not None:
@@ -189,17 +192,19 @@ class App:
         speed = SPEEDS[self.speed_idx]
         hist = sim.history[-1]
         line("Life-Simulator", bold=True)
-        line(f"Tag {clock.day + 1}, {clock.clock_text()} Uhr  ({'Nacht' if clock.is_night else 'Tag'})")
-        line(f"{clock.season_name}, Jahr {clock.year + 1}")
+        daytime = "Nacht" if clock.is_night else "Tag"
+        line(f"Tag {clock.day + 1}, {clock.clock_text()} ({daytime}) · {clock.season_name}, J{clock.year + 1}")
         line(f"Tempo: {speed:g}x  ({self.actual_tps:.0f} Ticks/s)" + ("  PAUSE" if self.paused else ""))
         line(f"Minions: {len(sim.minions)}   Generation Ø {hist['mean_generation']:.1f}")
-        line(f"Geburten: {sim.births}")
+        line(f"Gruppen: {len(sim.groups)} (größte {hist['largest_group']})")
+        line(f"Kämpfe: {sim.fights}   Geteilt: {sim.shares}")
         line(
-            f"Tote: {sim.deaths[DeathCause.STARVATION]} verhungert, "
-            f"{sim.deaths[DeathCause.OLD_AGE]} Alter"
+            f"Geburten: {sim.births}   Tote: {sim.deaths[DeathCause.STARVATION]}/"
+            f"{sim.deaths[DeathCause.OLD_AGE]}/{sim.deaths[DeathCause.FIGHT]}"
         )
+        line("(Hunger/Alter/Kampf)", color=(150, 150, 150))
         line(f"Bäume: {len(sim.forest.trees)}   Früchte: {sim.forest.fruit_count()}")
-        y += 8
+        y += 6
 
         m = self.selected
         if m is not None:
@@ -207,27 +212,39 @@ class App:
             rec = sim.lineage[m.id]
             status = "" if m.alive else f" (tot: {m.death_cause.value})"
             line(f"Minion #{m.id}{status}", bold=True)
+            group = sim.groups.get(m.group_id)
+            if group is not None:
+                role = ", Anführer" if group.leader == m.id else f", Anführer #{group.leader}"
+                self._draw_swatch(x, y, group.color)
+                line(f"    Gruppe #{group.id} ({len(group.members)}){role}")
+            else:
+                line("Keine Gruppe", color=(170, 170, 170))
             line(f"Aktion: {m.action.value}")
-            line(f"Energie: {m.energy:.0f} / {m.traits.max_energy:.0f}")
-            stage = "erwachsen" if m.is_adult else "jung"
-            line(f"Alter: {m.age / tpd:.1f} / {m.max_age / tpd:.1f} Tage ({stage})")
+            stage = "" if m.is_adult else ", jung"
+            line(
+                f"Energie {m.energy:.0f}/{m.traits.max_energy:.0f} · "
+                f"Alter {m.age / tpd:.1f}/{m.max_age / tpd:.1f} T{stage}"
+            )
             parents = f"#{rec.parents[0]} & #{rec.parents[1]}" if rec.parents else "Gründer"
             line(f"Generation {m.generation}, Eltern: {parents}")
             line(f"Kinder: {len(rec.children)}   Nachkommen: {sim.lineage.descendant_count(m.id)}")
-            line(f"Früchte gegessen: {m.fruits_eaten}   Können: {m.skill:.0%}")
-            y = self._draw_pyramid(x, y + 4, m.needs.levels()) + 8
+            line(f"Früchte: {m.fruits_eaten}   Können: {m.skill:.0%}   Geteilt: {m.times_shared}")
+            line(f"Kämpfe gewonnen/verloren: {m.fights_won}/{m.fights_lost}")
+            ties = sim.relations.strongest(m.id, 2)
+            line("Beziehungen: " + ("  ".join(f"#{o} {v:+.1f}" for o, v in ties) or "keine"))
+            y = self._draw_pyramid(x, y + 4, m.needs.levels()) + 6
+            row_h = self.font_small.get_linesize() + 1
             for g in GENE_NAMES:
                 v = m.genome[g]
-                label = GENE_NAMES_DE[g]
-                self.screen.blit(self.font.render(label, True, (200, 200, 200)), (x, y))
-                bar = pygame.Rect(x + 140, y + 4, 130, 10)
+                self.screen.blit(self.font_small.render(GENE_NAMES_DE[g], True, (200, 200, 200)), (x, y))
+                bar = pygame.Rect(x + 120, y + 3, 150, 9)
                 pygame.draw.rect(self.screen, (60, 60, 66), bar)
                 pygame.draw.rect(self.screen, (120, 180, 240), (bar.x, bar.y, bar.w * v, bar.h))
-                y += self.font.get_linesize() + 1
-            y += 8
+                y += row_h
+            y += 6
         else:
             line("Klicke auf einen Minion.", color=(160, 160, 160))
-            y += 8
+            y += 6
 
         if self.show_help or m is None:
             line("Steuerung", bold=True)
@@ -235,6 +252,9 @@ class App:
                 line(text, color=(170, 170, 170))
         else:
             line("H: Steuerung anzeigen", color=(150, 150, 150))
+
+    def _draw_swatch(self, x: int, y: int, color: tuple[int, int, int]) -> None:
+        pygame.draw.circle(self.screen, color, (x + 8, y + 9), 6, 3)
 
     def _draw_pyramid(self, x: int, y: int, levels: tuple[float, ...]) -> int:
         """Maslow pyramid, bottom level widest, each tier coloured by its satisfaction."""

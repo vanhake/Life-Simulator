@@ -22,6 +22,7 @@ __all__ = ["Action", "DeathCause", "Minion", "Traits"]
 class DeathCause(Enum):
     STARVATION = "Verhungert"
     OLD_AGE = "Altersschwäche"
+    FIGHT = "Im Kampf gestorben"
 
 
 def lerp(lo: float, hi: float, t: float) -> float:
@@ -42,6 +43,20 @@ NEEDS_INTERVAL = 6  # ticks between need updates (applied with the accumulated t
 REGION_SIZE = 6  # tiles per exploration memory cell
 AGGRESSION_THREAT_MIN = 0.6
 STATUS_PER_CHILD = 0.15
+FIGHT_RANGE = 1.0
+RIVAL_RADIUS = 3.0  # strangers closer than this can be challenged
+SHARE_RANGE = 1.2
+SHARE_ABOVE = 0.75  # only minions this well fed give food away ...
+NEEDY_BELOW = 0.4  # ... to friends this hungry
+
+
+# Actions that approach another minion, and how close they need to get.
+APPROACH_RANGE = {
+    Action.SEEK_MATE: MATE_RANGE,
+    Action.SOCIALIZE: 1.5,
+    Action.FIGHT: FIGHT_RANGE,
+    Action.SHARE: SHARE_RANGE,
+}
 
 
 @dataclass(frozen=True)
@@ -111,6 +126,11 @@ class Minion:
     heading: float = 0.0
     fruits_eaten: int = 0
     children: int = 0
+    group_id: int | None = None
+    fight_cooldown: int = 0
+    fights_won: int = 0
+    fights_lost: int = 0
+    times_shared: int = 0
     explored: dict[tuple[int, int], int] = field(default_factory=dict)  # region -> last tick
     _region: tuple[int, int] | None = None
     _moved: float = 0.0  # distance walked this tick
@@ -169,38 +189,73 @@ class Minion:
             return True
         return bool(self.parents and other.parents and set(self.parents) & set(other.parents))
 
+    def is_ally(self, other: "Minion", sim: "Simulation") -> bool:
+        """Kin, friends and members of the same group stick together."""
+        if self.group_id is not None and self.group_id == other.group_id:
+            return True
+        return sim.relations.is_friend(self.id, other.id) or self.is_close_kin(other)
+
     # ------------------------------------------------------------------ perception
 
     def perceive(self, sim: "Simulation") -> Perception:
         vision = self.vision(sim)
         p = Perception()
+        if self.energy_frac < 0.97:
+            p.fruit = self._find_fruit(sim, vision * (1 + 0.3 * self.skill))
         want_mate = self.can_mate(sim) and len(sim.minions) < sim.config.max_population
-        mate_d = vision
+        may_fight = self.is_adult and self.fight_cooldown <= 0
+        may_share = self.energy_frac > SHARE_ABOVE and self.genome["altruism"] > 0.2
+        group = sim.groups.get(self.group_id)
+        leader_id = group.leader if group is not None and group.leader != self.id else None
+        mate_d = rival_d = needy_d = vision
+        ally_d = other_d = leader = None
+        nearest_ally = nearest_any = None
         my_strength = self.genome["strength"]
+
         for other in sim.minion_index.query_radius(self.x, self.y, vision):
             if other is self or not other.alive:
                 continue
             d = math.hypot(other.x - self.x, other.y - self.y)
             if d > vision:
                 continue
+            ally = self.is_ally(other, sim)
             if d <= SOCIAL_RADIUS:
                 p.near_count += 1
-            if d < p.nearest_other_dist:
-                p.nearest_other, p.nearest_other_dist = other, d
+                if ally:
+                    p.near_friends += 1
+            if other.id == leader_id:
+                leader = other
+            if ally and (ally_d is None or d < ally_d):
+                nearest_ally, ally_d = other, d
+            if other_d is None or d < other_d:
+                nearest_any, other_d = other, d
             if want_mate and d <= mate_d and other.can_mate(sim) and not self.is_close_kin(other):
                 p.mate, mate_d = other, d
+            if ally:
+                if may_share and d <= needy_d and other.energy_frac < NEEDY_BELOW:
+                    p.needy_friend, needy_d = other, d
+                continue  # allies are neither rivals nor threats
+            if may_fight and d <= RIVAL_RADIUS and d <= rival_d and other.is_adult:
+                p.rival, rival_d = other, d
             aggression = other.genome["aggression"]
-            if aggression > AGGRESSION_THREAT_MIN and not self.is_close_kin(other):
+            if aggression > AGGRESSION_THREAT_MIN:
                 edge = other.genome["strength"] - my_strength + 0.2
                 if edge > 0:
                     t = (1 - d / vision) * (aggression - AGGRESSION_THREAT_MIN) * 2.5 * edge
                     if t > p.threat:
                         p.threat, p.threat_pos = t, (other.x, other.y)
-        # Company protects: a crowd of nearby minions makes threats less frightening.
-        p.threat = clamp01(p.threat * (1 - 0.15 * min(p.near_count, 4)))
 
-        if self.energy_frac < 0.97:
-            p.fruit = self._find_fruit(sim, vision * (1 + 0.3 * self.skill))
+        # Company protects: nearby minions, and friends even more, soften threats.
+        shelter = 0.1 * min(p.near_count, 4) + 0.1 * min(p.near_friends, 3)
+        p.threat = clamp01(p.threat * max(0.0, 1 - shelter))
+
+        # Prefer the group leader as company, then friends, then anyone.
+        company = leader or nearest_ally or nearest_any
+        if company is not None:
+            p.nearest_other = company
+            p.nearest_other_dist = math.hypot(company.x - self.x, company.y - self.y)
+        if p.rival is not None and p.fruit is not None:
+            p.rival_over_food = p.rival.target_tree is p.fruit
         return p
 
     def _find_fruit(self, sim: "Simulation", radius: float) -> "Tree | None":
@@ -253,10 +308,16 @@ class Minion:
         elif action is Action.EXPLORE:
             if previous is not Action.EXPLORE or not self.path:
                 self._go_to_unexplored(sim)
+        elif action is Action.FIGHT:
+            self.target_minion = p.rival
+            self._go_to(sim, (p.rival.x, p.rival.y))
+        elif action is Action.SHARE:
+            self.target_minion = p.needy_friend
+            self._go_to(sim, (p.needy_friend.x, p.needy_friend.y))
 
         if action is not Action.SEEK_FOOD:
             self.target_tree = None
-        if action not in (Action.SOCIALIZE, Action.SEEK_MATE):
+        if action not in APPROACH_RANGE:
             self.target_minion = None
 
     # ------------------------------------------------------------------ destinations
@@ -329,17 +390,19 @@ class Minion:
                 self._eat(sim, tree)
                 return
 
-        if action in (Action.SEEK_MATE, Action.SOCIALIZE):
+        if action in APPROACH_RANGE:
             other = self.target_minion
             if other is None or not other.alive:
                 self._redecide = True
                 self.path.clear()
                 return
             d = math.hypot(other.x - self.x, other.y - self.y)
-            close = MATE_RANGE if action is Action.SEEK_MATE else 1.5
-            if d <= close:
+            if d <= APPROACH_RANGE[action]:
                 self.path.clear()
-                return  # mating is resolved by the simulation; company is just enjoyed
+                if action is Action.SHARE:
+                    sim.share(self, other)
+                # Mating and fights are resolved by the simulation; company is enjoyed.
+                return
             # Re-aim if the other has wandered away from where we are heading.
             goal = self.target
             if goal is None or math.hypot(other.x - goal[0], other.y - goal[1]) > 1.5:
@@ -397,6 +460,8 @@ class Minion:
         self.age += 1
         if self.mate_cooldown > 0:
             self.mate_cooldown -= 1
+        if self.fight_cooldown > 0:
+            self.fight_cooldown -= 1
 
         drain = self.traits.idle_drain
         if self.action is Action.SLEEP:
@@ -434,9 +499,10 @@ class Minion:
         idle_days = max(0.0, awake_days - walk_days)
         n.activity = clamp01(n.activity + 10.0 * walk_days - t.restlessness * idle_days)
 
-        near = self.perception.near_count
-        if near > 0:
-            n.belonging = min(1.0, n.belonging + 2.0 * days * min(3, near))
+        # Company satisfies belonging; friends count double.
+        company = self.perception.near_count + self.perception.near_friends
+        if company > 0:
+            n.belonging = min(1.0, n.belonging + 2.0 * days * min(3, company))
         else:
             n.belonging = max(0.0, n.belonging - t.loneliness * days)
 

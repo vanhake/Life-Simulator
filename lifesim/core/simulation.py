@@ -14,11 +14,16 @@ from lifesim.agents.minion import MATE_RANGE, Action, DeathCause, Minion
 from lifesim.config import SimConfig
 from lifesim.core.clock import Clock
 from lifesim.core.spatial import SpatialHash
+from lifesim.social import interactions
+from lifesim.social.groups import Groups
+from lifesim.social.relations import Relations
 from lifesim.world.terrain import TerrainMap, generate_terrain
 from lifesim.world.trees import Forest
 
 STATS_INTERVAL = 30
 TREE_INTERVAL = 10  # trees change slowly; update them in batches
+SOCIAL_INTERVAL = 60  # ticks between bonding/forgetting updates
+GROUP_INTERVAL = 240  # ticks between group re-clustering
 
 
 class Simulation:
@@ -37,8 +42,12 @@ class Simulation:
         self.minions: list[Minion] = []
         self.minion_index: SpatialHash[Minion] = SpatialHash(cell_size=8.0)
         self.lineage = Lineage()
+        self.relations = Relations()
+        self.groups = Groups()
         self._next_minion_id = 0
         self.births = 0
+        self.fights = 0
+        self.shares = 0
         self.deaths: Counter[DeathCause] = Counter()
         self.history: list[dict] = []
 
@@ -110,8 +119,10 @@ class Simulation:
         for m in self.minions:
             m.act(self)
         self._resolve_mating()
+        interactions.resolve_fights(self)
         for m in self.minions:
-            m.metabolise(self)
+            if m.alive:  # fights may already have killed some
+                m.metabolise(self)
 
         alive = []
         for m in self.minions:
@@ -120,8 +131,14 @@ class Simulation:
             else:
                 self.deaths[m.death_cause] += 1
                 self.lineage.death(m.id, self.tick, m.death_cause.value)
+                self.relations.remove(m.id)
         self.minions = alive
         self._rebuild_index()
+
+        if self.tick % SOCIAL_INTERVAL == 0:
+            interactions.bond_nearby(self, SOCIAL_INTERVAL / self.config.ticks_per_day)
+        if self.tick % GROUP_INTERVAL == 0:
+            self.groups.update(self.minions, self.relations, self.tick, self.rng)
 
         if self.tick % STATS_INTERVAL == 0:
             self._record_stats()
@@ -166,8 +183,15 @@ class Simulation:
             parent.action = Action.REST
             parent._redecide = True
         child.energy = min(child.traits.max_energy, gift)
+        for parent in (a, b):
+            self.relations.set(parent.id, child.id, interactions.KIN_BOND)
+        # Children are born into their parents' group until the next re-clustering.
+        child.group_id = a.group_id if a.group_id is not None else b.group_id
         self.births += 1
         return child
+
+    def share(self, giver: Minion, receiver: Minion) -> float:
+        return interactions.share(self, giver, receiver)
 
     # ------------------------------------------------------------------ stats
 
@@ -181,6 +205,12 @@ class Simulation:
             "births": self.births,
             "deaths_starvation": self.deaths[DeathCause.STARVATION],
             "deaths_old_age": self.deaths[DeathCause.OLD_AGE],
+            "deaths_fight": self.deaths[DeathCause.FIGHT],
+            "fights": self.fights,
+            "shares": self.shares,
+            "groups": len(self.groups),
+            "largest_group": max((len(g.members) for g in self.groups.groups.values()), default=0),
+            "in_group": sum(1 for m in self.minions if m.group_id is not None),
             "fruits": self.forest.fruit_count(),
             "trees": len(self.forest.trees),
             "mean_generation": sum(m.generation for m in self.minions) / n if n else 0.0,
