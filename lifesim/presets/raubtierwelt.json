@@ -1,0 +1,11 @@
+{
+  "titel": "Raubtierwelt",
+  "beschreibung": "Viele, sich schnell vermehrende Raubtiere. Im ersten Jahr droht Gefahr; wer überlebt, wird schneller und wachsamer, bis die Minions ihren Jägern oft davonlaufen.",
+  "werte": {
+    "initial_predators": 8,
+    "max_predators": 25,
+    "predator_breed_energy": 0.8,
+    "predator_breed_cooldown_days": 4.0,
+    "predator_lifespan_days": 20.0
+  }
+}

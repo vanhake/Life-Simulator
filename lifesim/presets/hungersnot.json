@@ -1,0 +1,11 @@
+{
+  "titel": "Hungersnot",
+  "beschreibung": "Wenige Bäume und magere Früchte: harter Selektionsdruck auf sparsame, ausdauernde Minions.",
+  "werte": {
+    "fruit_energy": 25.0,
+    "fruit_regrow_ticks": 1800,
+    "tree_density": 0.03,
+    "initial_minions": 80,
+    "initial_predators": 2
+  }
+}

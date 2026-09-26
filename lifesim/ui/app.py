@@ -13,6 +13,8 @@ from lifesim.agents.minion import Minion
 from lifesim.agents.predator import Predator
 from lifesim.config import SimConfig
 from lifesim.core.simulation import Simulation
+from lifesim.persistence import export
+from lifesim.persistence import save as savefile
 from lifesim.ui import theme
 from lifesim.ui.camera import Camera
 from lifesim.ui.gui_theme import GUI_THEME
@@ -30,6 +32,7 @@ PAN_SPEED_PX = 12
 # Max wall time per frame spent simulating, so high speeds degrade gracefully instead of freezing.
 SIM_BUDGET_S = 0.030
 TURBO_BUDGET_S = 0.200  # turbo: simulate as much as fits, redraw only a few times a second
+NOTICE_SECONDS = 4.0
 
 TABS = ("Übersicht", "Minion", "Einstellungen", "Hilfe")
 OVERVIEW, INSPECTOR, SETTINGS, HELP = range(4)
@@ -63,6 +66,7 @@ class App:
         }
         self.settings = SettingsPanel(self)
         self.selected: Selectable | None = None
+        self._notice: tuple[str, float] | None = None
         self.restart(dataclasses.replace(config))
 
     # ------------------------------------------------------------------ setup
@@ -70,7 +74,11 @@ class App:
     def restart(self, config: SimConfig | None = None) -> None:
         if config is not None:
             self.config = config
-        self.sim = Simulation(dataclasses.replace(self.config))
+        self._use(Simulation(dataclasses.replace(self.config)))
+
+    def _use(self, sim: Simulation) -> None:
+        """Show `sim` (new or loaded) with a fresh renderer, camera and widgets."""
+        self.sim = sim
         self.renderer = Renderer(self.sim)
         mr = self.map_rect
         self.cam = Camera(mr.w, mr.h, self.sim.terrain.width, self.sim.terrain.height)
@@ -124,6 +132,31 @@ class App:
         for i, b in enumerate(self.tab_buttons):
             b.select() if i == self.tab else b.unselect()
         self.settings.show(self.tab == SETTINGS)
+
+    # ------------------------------------------------------------------ files
+
+    def save_game(self, path=None) -> None:
+        path = savefile.save(self.sim, path or savefile.timestamped_path())
+        self.settings.refresh_saves()
+        self.notify(f"Gespeichert: {path}")
+
+    def load_game(self, path) -> None:
+        try:
+            sim = savefile.load(path)
+        except savefile.SaveError as e:
+            self.notify(f"Laden fehlgeschlagen: {e}")
+            return
+        self.config = dataclasses.replace(sim.config)
+        self.pending = dataclasses.replace(sim.config)
+        self._use(sim)
+        self.notify(f"Geladen: {path}")
+
+    def export_csv(self) -> None:
+        history, minions = export.export_all(self.sim)
+        self.notify(f"Exportiert: {history.name} und {minions.name} in {history.parent}/")
+
+    def notify(self, text: str) -> None:
+        self._notice = (text, time.perf_counter() + NOTICE_SECONDS)
 
     # ------------------------------------------------------------------ public actions
 
@@ -275,6 +308,15 @@ class App:
             self.toggle_follow()
         elif key == pygame.K_g:
             self.renderer.color_by_group = not self.renderer.color_by_group
+        elif key == pygame.K_F5:
+            self.save_game(savefile.QUICKSAVE)
+        elif key == pygame.K_F9:
+            if savefile.QUICKSAVE.exists():
+                self.load_game(savefile.QUICKSAVE)
+            else:
+                self.notify("Noch kein Schnellspeicher vorhanden (F5)")
+        elif key == pygame.K_e:
+            self.export_csv()
         elif key in tab_keys:
             self.show_tab(tab_keys[key])
 
@@ -299,8 +341,24 @@ class App:
         if self.tab in self.panels:
             self.panels[self.tab].draw(self.screen, self.content_rect, pygame.mouse.get_pos())
         self._draw_status()
+        self._draw_notice()
         self.manager.draw_ui(self.screen)
         pygame.display.flip()
+
+    def _draw_notice(self) -> None:
+        if self._notice is None:
+            return
+        text, until = self._notice
+        if time.perf_counter() > until:
+            self._notice = None
+            return
+        img = theme.font(14).render(text, True, theme.TEXT)
+        box = img.get_rect().inflate(24, 14)
+        mr = self.map_rect
+        box.midbottom = (mr.centerx, mr.bottom - 20)
+        pygame.draw.rect(self.screen, theme.SURFACE_RAISED, box, border_radius=6)
+        pygame.draw.rect(self.screen, theme.GRID, box, 1, border_radius=6)
+        self.screen.blit(img, img.get_rect(center=box.center))
 
     def _draw_status(self) -> None:
         """Speed and pause state as an overlay in the map's corner."""

@@ -23,6 +23,8 @@ SHORTCUTS = (
     ("Pos1", "Ganze Karte zeigen"),
     ("G", "Farbe: Gene oder Gruppe"),
     ("R", "Neustart"),
+    ("F5 / F9", "Schnell speichern / laden"),
+    ("E", "Statistik als CSV exportieren"),
     ("1 – 4", "Reiter wechseln"),
 )
 

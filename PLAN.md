@@ -174,7 +174,7 @@ Rauschen. Hysterese verhindert ständiges Umentscheiden.
   Generation, Eltern und Kinder sowie die stärksten Beziehungen. Die Kamera
   kann dem Minion folgen.
 - **Tastatur:** Leertaste für Pause, `+`/`-` für das Tempo, `T` für Turbo, `1`–`4` für
-  die Reiter; in Phase 7 kommen `F5`/`F9` für Speichern/Laden und `E` für den CSV-Export.
+  die Reiter, `F5`/`F9` für Speichern/Laden und `E` für den CSV-Export.
 
 ## 8. Phasen
 
@@ -192,7 +192,7 @@ Nach jeder Phase ist das Programm lauffähig, getestet und committet.
 4. ✅ **Soziales:** Beziehungen, Gruppen, Status/Anführer, Kampf und Teilen.
 5. ✅ **Raubtiere:** Population, Jagd, Fortpflanzung, Gruppenabwehr.
 6. ✅ **UI komplett:** pygame_gui-Einstellungspanel, Graphen, Inspektor.
-7. **Extras:** Speichern/Laden, CSV-Export, Presets, Turbo-Modus,
+7. ✅ **Extras:** Speichern/Laden, CSV-Export, Presets, Turbo-Modus,
    README/Bedienungsanleitung.
 
 ## 9. Qualität

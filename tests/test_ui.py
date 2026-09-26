@@ -122,3 +122,26 @@ def test_charts_handle_edge_cases():
     charts.line_chart(surface, rect, "null", [0, 0, 0], [0, 1, 2], (255, 0, 0), (100, 60))
     charts.sparkline(surface, pygame.Rect(0, 130, 140, 40), "gen", [0.5] * 500, (0, 0, 255), (50, 150))
     assert charts._nice_max(210) == 250 and charts._nice_max(7) == 10 and charts._nice_max(0) == 1
+
+
+def test_save_load_and_export_from_the_ui(app, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    app.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F5, mod=0, unicode=""))
+    assert (tmp_path / "saves" / "schnellspeicher.lifesim").exists()
+    tick = app.sim.tick
+    for _ in range(50):
+        app.sim.step()
+    app.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F9, mod=0, unicode=""))
+    assert app.sim.tick == tick
+    app.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_e, mod=0, unicode=""))
+    assert len(list((tmp_path / "exports").glob("*.csv"))) == 2
+    app._draw()  # the notice overlay renders
+
+
+def test_starting_a_preset_from_the_settings(app):
+    panel = app.settings
+    names = [p.name for p in panel._presets]
+    panel._preset_index = names.index("paradies")
+    panel._start_preset()
+    assert app.sim.config.initial_predators == 0
+    assert not app.sim.predators

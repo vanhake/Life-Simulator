@@ -15,11 +15,14 @@ from pygame_gui.elements import (
     UIHorizontalSlider,
     UILabel,
     UIScrollingContainer,
+    UITextBox,
     UITextEntryLine,
 )
 
+from lifesim import presets
 from lifesim.agents.genome import Genome
 from lifesim.config import SimConfig
+from lifesim.persistence import save as savefile
 
 if TYPE_CHECKING:
     from lifesim.ui.app import App
@@ -84,7 +87,15 @@ class SettingsPanel:
         self._sliders: dict[UIHorizontalSlider, tuple[Setting, UILabel, bool]] = {}
         self._buttons: dict[UIButton, Callable[[], None]] = {}
         self.seed_entry: UITextEntryLine | None = None
+        self.name_entry: UITextEntryLine | None = None
         self._immigration_button: UIButton | None = None
+        self._presets: list[presets.Preset] = []
+        self._preset_index = 0
+        self._preset_label: UILabel | None = None
+        self._preset_text: UITextBox | None = None
+        self._saves: list = []
+        self._save_index = 0
+        self._save_label: UILabel | None = None
 
     # ------------------------------------------------------------------ building
 
@@ -128,6 +139,38 @@ class SettingsPanel:
             y += 40
             return made
 
+        def selector(on_prev: Callable[[], None], on_next: Callable[[], None]) -> UILabel:
+            """[‹] label [›] for stepping through a list."""
+            nonlocal y
+            prev = UIButton(pygame.Rect(PAD, y, 30, 30), "‹", manager, container=self.container)
+            label = UILabel(pygame.Rect(PAD + 36, y, inner_w - 72, 30), "", manager, container=self.container)
+            nxt = UIButton(pygame.Rect(PAD + inner_w - 30, y, 30, 30), "›", manager, container=self.container)
+            self._buttons[prev] = on_prev
+            self._buttons[nxt] = on_next
+            y += 36
+            return label
+
+        section("Spielstand")
+        buttons(("Speichern (F5)", self.app.save_game), ("CSV exportieren (E)", self.app.export_csv))
+        self._save_label = selector(lambda: self._step_save(-1), lambda: self._step_save(+1))
+        buttons(("Gewählten Spielstand laden", self._load_selected))
+        self.refresh_saves()
+        y += 6
+
+        section("Voreinstellungen")
+        self._preset_label = selector(lambda: self._step_preset(-1), lambda: self._step_preset(+1))
+        self._preset_text = UITextBox("", pygame.Rect(PAD, y, inner_w, 118), manager, container=self.container)
+        y += 124
+        buttons(("Voreinstellung starten", self._start_preset))
+        self.name_entry = UITextEntryLine(pygame.Rect(PAD, y, inner_w - 168, 30), manager,
+                                          container=self.container, placeholder_text="Name")  # fmt: skip
+        b = UIButton(pygame.Rect(PAD + inner_w - 160, y, 160, 30), "Als eigene sichern", manager,
+                     container=self.container)  # fmt: skip
+        self._buttons[b] = self._save_preset
+        y += 40
+        self.refresh_presets()
+        y += 6
+
         section("Welt", "Wirkt sofort")
         for s in LIVE_WORLD:
             slider(s, live=True)
@@ -163,7 +206,58 @@ class SettingsPanel:
 
     @property
     def typing(self) -> bool:
-        return self.seed_entry is not None and self.seed_entry.is_focused
+        return any(e is not None and e.is_focused for e in (self.seed_entry, self.name_entry))
+
+    # ------------------------------------------------------------------ lists
+
+    def refresh_saves(self) -> None:
+        self._saves = savefile.list_saves()
+        self._save_index = min(self._save_index, max(0, len(self._saves) - 1))
+        if self._save_label is not None:
+            text = self._saves[self._save_index].stem if self._saves else "keine Spielstände"
+            self._save_label.set_text(text)
+
+    def _step_save(self, delta: int) -> None:
+        if self._saves:
+            self._save_index = (self._save_index + delta) % len(self._saves)
+        self.refresh_saves()
+
+    def _load_selected(self) -> None:
+        if self._saves:
+            self.app.load_game(self._saves[self._save_index])
+
+    def refresh_presets(self, select: str | None = None) -> None:
+        self._presets = presets.list_presets()
+        if select is not None:
+            names = [p.name for p in self._presets]
+            self._preset_index = names.index(select) if select in names else 0
+        self._preset_index %= max(1, len(self._presets))
+        preset = self._presets[self._preset_index]
+        if self._preset_label is not None:
+            mark = "" if preset.builtin else " (eigene)"
+            self._preset_label.set_text(f"{preset.title}{mark}")
+        if self._preset_text is not None:
+            self._preset_text.set_text(preset.description)
+
+    def _step_preset(self, delta: int) -> None:
+        self._preset_index = (self._preset_index + delta) % len(self._presets)
+        self.refresh_presets()
+
+    def _start_preset(self) -> None:
+        preset = self._presets[self._preset_index]
+        self._read_seed()
+        self.app.pending = preset.config(seed=self.app.pending.seed)
+        self.app.restart(dataclasses.replace(self.app.pending))
+        self.app.notify(f"Voreinstellung „{preset.title}“ gestartet")
+
+    def _save_preset(self) -> None:
+        title = (self.name_entry.get_text() if self.name_entry else "").strip()
+        if not title:
+            self.app.notify("Bitte zuerst einen Namen eingeben")
+            return
+        path = presets.save_user_preset(title, self.app.pending)
+        self.refresh_presets(select=path.stem)
+        self.app.notify(f"Voreinstellung gespeichert: {path}")
 
     # ------------------------------------------------------------------ events
 

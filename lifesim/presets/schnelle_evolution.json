@@ -1,0 +1,9 @@
+{
+  "titel": "Schnelle Evolution",
+  "beschreibung": "Starke Mutationen und kurze Jahreszeiten: Gene verändern sich innerhalb weniger Generationen sichtbar.",
+  "werte": {
+    "mutation_rate": 0.3,
+    "mutation_strength": 0.15,
+    "days_per_season": 3
+  }
+}

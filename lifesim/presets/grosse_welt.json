@@ -1,0 +1,12 @@
+{
+  "titel": "Große Welt",
+  "beschreibung": "Eine weite Karte mit vielen Minions und Raubtieren. Braucht einen schnellen Rechner.",
+  "werte": {
+    "map_width": 200,
+    "map_height": 130,
+    "initial_minions": 160,
+    "initial_predators": 10,
+    "max_population": 600,
+    "max_predators": 30
+  }
+}
