@@ -1,0 +1,10 @@
+{
+  "titel": "Paradies",
+  "beschreibung": "Reichlich Früchte und keine Raubtiere: Die Population wächst stark, soziale Effekte stehen im Vordergrund.",
+  "werte": {
+    "fruit_energy": 40.0,
+    "fruit_regrow_ticks": 900,
+    "initial_predators": 0,
+    "predator_immigration": false
+  }
+}
