@@ -1,105 +1,189 @@
-"""Main window: event loop, simulation pacing and a simple info side panel."""
+"""Main window: map on the left, a side panel with toolbar and tabs on the right."""
 
 from __future__ import annotations
 
+import dataclasses
 import time
 
 import pygame
+import pygame_gui
+from pygame_gui.elements import UIButton, UILabel
 
-from lifesim.agents.genome import GENE_NAMES, GENE_NAMES_DE
-from lifesim.agents.minion import DeathCause, Minion
-from lifesim.agents.needs import LEVEL_NAMES_DE
+from lifesim.agents.minion import Minion
+from lifesim.agents.predator import Predator
 from lifesim.config import SimConfig
 from lifesim.core.simulation import Simulation
+from lifesim.ui import theme
 from lifesim.ui.camera import Camera
+from lifesim.ui.gui_theme import GUI_THEME
+from lifesim.ui.panels.help import HelpPanel
+from lifesim.ui.panels.inspector import InspectorPanel
+from lifesim.ui.panels.overview import OverviewPanel
+from lifesim.ui.panels.settings import SettingsPanel
 from lifesim.ui.renderer import Renderer
 
-PANEL_W = 300
+PANEL_W = 400
+TOOLBAR_H = 86
 SPEEDS = (0.25, 0.5, 1, 2, 4, 8, 16, 32, 64)
 FPS = 60
 PAN_SPEED_PX = 12
 # Max wall time per frame spent simulating, so high speeds degrade gracefully instead of freezing.
 SIM_BUDGET_S = 0.030
+TURBO_BUDGET_S = 0.200  # turbo: simulate as much as fits, redraw only a few times a second
 
-HELP_LINES = (
-    "Leertaste  Pause / Weiter",
-    "+ / -      Tempo",
-    "N          Einzelschritt",
-    "WASD/Pfeile Karte bewegen",
-    "Rechte Maus Karte ziehen",
-    "Mausrad    Zoom",
-    "Linksklick Minion auswählen",
-    "F          Ausgewähltem Minion folgen",
-    "Pos1       Ganze Karte zeigen",
-    "R          Neustart",
-    "G          Farbe: Gene / Gruppe",
-    "H          Hilfe ein/aus",
-)
+TABS = ("Übersicht", "Minion", "Einstellungen", "Hilfe")
+OVERVIEW, INSPECTOR, SETTINGS, HELP = range(4)
 
-
-def satisfaction_color(v: float) -> tuple[int, int, int]:
-    """Red (unsatisfied) through yellow to green (satisfied)."""
-    red, yellow, green = (205, 70, 60), (230, 200, 70), (90, 190, 95)
-    a, b, t = (red, yellow, v * 2) if v < 0.5 else (yellow, green, (v - 0.5) * 2)
-    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
+Selectable = Minion | Predator
 
 
 class App:
-    def __init__(self, config: SimConfig, size: tuple[int, int] = (1280, 800)) -> None:
+    def __init__(self, config: SimConfig, size: tuple[int, int] = (1440, 880)) -> None:
         pygame.init()
+        theme.reset_fonts()
         pygame.display.set_caption("Life-Simulator")
         self.screen = pygame.display.set_mode(size, pygame.RESIZABLE)
         self.clock = pygame.time.Clock()
-        self.font = pygame.font.SysFont("dejavusans,arial", 14)
-        self.font_bold = pygame.font.SysFont("dejavusans,arial", 16, bold=True)
-        self.font_small = pygame.font.SysFont("dejavusans,arial", 12)
-        self.show_help = False
-        self.config = config
+        self.manager = pygame_gui.UIManager(size, GUI_THEME)
+        self.pending = dataclasses.replace(config)  # settings for the next restart
         self.speed_idx = SPEEDS.index(1)
         self.paused = False
+        self.turbo = False
+        self.follow = False
+        self.tab = OVERVIEW
         self._tick_accum = 0.0
         self._ticks_this_second = 0
         self._tps_window_start = time.perf_counter()
         self.actual_tps = 0.0
-        self.follow = False
         self._dragging = False
-        self.restart()
+        self.panels = {
+            OVERVIEW: OverviewPanel(self),
+            INSPECTOR: InspectorPanel(self),
+            HELP: HelpPanel(self),
+        }
+        self.settings = SettingsPanel(self)
+        self.selected: Selectable | None = None
+        self.restart(dataclasses.replace(config))
 
     # ------------------------------------------------------------------ setup
 
-    def restart(self) -> None:
-        self.sim = Simulation(self.config)
+    def restart(self, config: SimConfig | None = None) -> None:
+        if config is not None:
+            self.config = config
+        self.sim = Simulation(dataclasses.replace(self.config))
         self.renderer = Renderer(self.sim)
-        w, h = self.screen.get_size()
-        self.cam = Camera(w - PANEL_W, h, self.sim.terrain.width, self.sim.terrain.height)
-        self.selected: Minion | None = None
+        mr = self.map_rect
+        self.cam = Camera(mr.w, mr.h, self.sim.terrain.width, self.sim.terrain.height)
+        self.selected = None
+        self.follow = False
+        self.rebuild_ui()
 
     @property
     def map_rect(self) -> pygame.Rect:
         w, h = self.screen.get_size()
-        return pygame.Rect(0, 0, w - PANEL_W, h)
+        return pygame.Rect(0, 0, max(1, w - PANEL_W), h)
+
+    @property
+    def panel_rect(self) -> pygame.Rect:
+        w, h = self.screen.get_size()
+        return pygame.Rect(w - PANEL_W, 0, PANEL_W, h)
+
+    @property
+    def content_rect(self) -> pygame.Rect:
+        p = self.panel_rect
+        return pygame.Rect(p.x, p.y + TOOLBAR_H, p.w, p.h - TOOLBAR_H)
+
+    def rebuild_ui(self) -> None:
+        """(Re)create all pygame_gui widgets, e.g. after a restart or a window resize."""
+        self.manager.clear_and_reset()
+        self.manager.set_window_resolution(self.screen.get_size())
+        p = self.panel_rect
+        x, y = p.x + 10, p.y + 8
+        self.btn_pause = UIButton(pygame.Rect(x, y, 96, 30), "", self.manager)
+        self.btn_step = UIButton(pygame.Rect(x + 100, y, 70, 30), "Schritt", self.manager)
+        self.btn_slower = UIButton(pygame.Rect(x + 174, y, 30, 30), "–", self.manager)
+        self.lbl_speed = UILabel(pygame.Rect(x + 206, y, 50, 30), "", self.manager, object_id="#value")
+        self.btn_faster = UIButton(pygame.Rect(x + 258, y, 30, 30), "+", self.manager)
+        self.btn_turbo = UIButton(pygame.Rect(x + 292, y, 88, 30), "Turbo", self.manager)
+        tab_w = (p.w - 20 - 3 * 4) // 4
+        self.tab_buttons = [
+            UIButton(pygame.Rect(x + i * (tab_w + 4), y + 40, tab_w, 30), name, self.manager)
+            for i, name in enumerate(TABS)
+        ]
+        self.settings.build(self.manager, self.content_rect)
+        self._sync_widgets()
+
+    def _sync_widgets(self) -> None:
+        self.btn_pause.set_text("Weiter" if self.paused else "Pause")
+        if self.turbo:
+            self.btn_turbo.select()
+            self.lbl_speed.set_text("max")
+        else:
+            self.btn_turbo.unselect()
+            self.lbl_speed.set_text(f"{SPEEDS[self.speed_idx]:g}x".replace(".", ","))
+        for i, b in enumerate(self.tab_buttons):
+            b.select() if i == self.tab else b.unselect()
+        self.settings.show(self.tab == SETTINGS)
+
+    # ------------------------------------------------------------------ public actions
+
+    def select(self, obj: Selectable | None) -> None:
+        self.selected = obj
+        self.follow = False
+        if obj is not None:
+            self.show_tab(INSPECTOR)
+
+    def toggle_follow(self) -> None:
+        if self.selected is not None and self.selected.alive:
+            self.follow = not self.follow
+
+    def show_tab(self, tab: int) -> None:
+        self.tab = tab
+        self._sync_widgets()
+
+    def toggle_pause(self) -> None:
+        self.paused = not self.paused
+        self._sync_widgets()
+
+    def change_speed(self, delta: int) -> None:
+        self.turbo = False
+        self.speed_idx = max(0, min(len(SPEEDS) - 1, self.speed_idx + delta))
+        self._sync_widgets()
+
+    def toggle_turbo(self) -> None:
+        self.turbo = not self.turbo
+        self._sync_widgets()
+
+    def step_once(self) -> None:
+        if self.paused:
+            self.sim.step()
 
     # ------------------------------------------------------------------ loop
 
     def run(self) -> None:
         running = True
         while running:
+            dt = self.clock.tick(FPS) / 1000.0
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
                 else:
                     self.handle_event(event)
+            self.manager.update(dt)
             self._handle_held_keys()
             self._advance()
             self._draw()
-            self.clock.tick(FPS)
         pygame.quit()
 
     def _advance(self) -> None:
         if self.paused:
             return
-        self._tick_accum += SPEEDS[self.speed_idx]
-        deadline = time.perf_counter() + SIM_BUDGET_S
+        if self.turbo:
+            budget, self._tick_accum = TURBO_BUDGET_S, float("inf")
+        else:
+            budget = SIM_BUDGET_S
+            self._tick_accum += SPEEDS[self.speed_idx]
+        deadline = time.perf_counter() + budget
         while self._tick_accum >= 1:
             self._tick_accum -= 1
             self.sim.step()
@@ -115,20 +199,36 @@ class App:
         if self.selected is not None and not self.selected.alive:
             self.follow = False
 
+    # ------------------------------------------------------------------ events
+
     def handle_event(self, event: pygame.event.Event) -> None:
         if event.type == pygame.VIDEORESIZE:
-            self.cam.resize(max(1, event.w - PANEL_W), event.h)
-        elif event.type == pygame.KEYDOWN:
+            self.screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
+            mr = self.map_rect
+            self.cam.resize(mr.w, mr.h)
+            self.rebuild_ui()
+            return
+        consumed = self.manager.process_events(event)
+        if event.type == pygame_gui.UI_BUTTON_PRESSED:
+            self._on_button(event.ui_element)
+        self.settings.process_event(event)
+        if consumed:
+            return
+
+        if event.type == pygame.KEYDOWN and not self.settings.typing:
             self._handle_key(event.key)
         elif event.type == pygame.MOUSEWHEEL:
             mx, my = pygame.mouse.get_pos()
             if self.map_rect.collidepoint(mx, my):
-                self.cam.zoom_at(1.15 ** event.y, mx, my)
+                self.cam.zoom_at(1.15**event.y, mx, my)
+            elif self.content_rect.collidepoint(mx, my) and self.tab in self.panels:
+                self.panels[self.tab].wheel(event.y)
         elif event.type == pygame.MOUSEBUTTONDOWN:
             if event.button == 1 and self.map_rect.collidepoint(event.pos):
-                wx, wy = self.cam.screen_to_world(*event.pos)
-                self.selected = self.sim.minion_at(wx, wy, radius=max(0.8, 8 / self.cam.zoom))
-            elif event.button == 3:
+                self._select_at(event.pos)
+            elif event.button == 1 and self.content_rect.collidepoint(event.pos) and self.tab in self.panels:
+                self.panels[self.tab].click(self.content_rect, event.pos)
+            elif event.button == 3 and self.map_rect.collidepoint(event.pos):
                 self._dragging = True
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 3:
             self._dragging = False
@@ -136,28 +236,51 @@ class App:
             self.follow = False
             self.cam.pan(-event.rel[0], -event.rel[1])
 
+    def _on_button(self, element) -> None:
+        actions = {
+            self.btn_pause: self.toggle_pause,
+            self.btn_step: self.step_once,
+            self.btn_slower: lambda: self.change_speed(-1),
+            self.btn_faster: lambda: self.change_speed(+1),
+            self.btn_turbo: self.toggle_turbo,
+        }
+        if element in actions:
+            actions[element]()
+        elif element in self.tab_buttons:
+            self.show_tab(self.tab_buttons.index(element))
+
+    def _select_at(self, pos: tuple[int, int]) -> None:
+        wx, wy = self.cam.screen_to_world(*pos)
+        radius = max(0.8, 8 / self.cam.zoom)
+        self.select(self.sim.predator_at(wx, wy, radius) or self.sim.minion_at(wx, wy, radius))
+
     def _handle_key(self, key: int) -> None:
+        tab_keys = {pygame.K_1: OVERVIEW, pygame.K_2: INSPECTOR, pygame.K_3: SETTINGS, pygame.K_4: HELP}
         if key == pygame.K_SPACE:
-            self.paused = not self.paused
+            self.toggle_pause()
         elif key in (pygame.K_PLUS, pygame.K_KP_PLUS, pygame.K_EQUALS):
-            self.speed_idx = min(len(SPEEDS) - 1, self.speed_idx + 1)
+            self.change_speed(+1)
         elif key in (pygame.K_MINUS, pygame.K_KP_MINUS):
-            self.speed_idx = max(0, self.speed_idx - 1)
-        elif key == pygame.K_n and self.paused:
-            self.sim.step()
+            self.change_speed(-1)
+        elif key == pygame.K_t:
+            self.toggle_turbo()
+        elif key == pygame.K_n:
+            self.step_once()
         elif key == pygame.K_r:
             self.restart()
         elif key == pygame.K_HOME:
             self.follow = False
             self.cam.fit()
+        elif key == pygame.K_f:
+            self.toggle_follow()
         elif key == pygame.K_g:
             self.renderer.color_by_group = not self.renderer.color_by_group
-        elif key == pygame.K_h:
-            self.show_help = not self.show_help
-        elif key == pygame.K_f and self.selected is not None:
-            self.follow = not self.follow
+        elif key in tab_keys:
+            self.show_tab(tab_keys[key])
 
     def _handle_held_keys(self) -> None:
+        if self.settings.typing:
+            return
         keys = pygame.key.get_pressed()
         dx = (keys[pygame.K_d] or keys[pygame.K_RIGHT]) - (keys[pygame.K_a] or keys[pygame.K_LEFT])
         dy = (keys[pygame.K_s] or keys[pygame.K_DOWN]) - (keys[pygame.K_w] or keys[pygame.K_UP])
@@ -170,104 +293,20 @@ class App:
     # ------------------------------------------------------------------ drawing
 
     def _draw(self) -> None:
-        map_surface = self.screen.subsurface(self.map_rect)
-        self.renderer.draw(map_surface, self.cam, self.selected)
-        self._draw_panel()
+        self.renderer.draw(self.screen.subsurface(self.map_rect), self.cam, self.selected)
+        pygame.draw.rect(self.screen, theme.SURFACE, self.panel_rect)
+        pygame.draw.line(self.screen, theme.GRID, self.panel_rect.topleft, self.panel_rect.bottomleft)
+        if self.tab in self.panels:
+            self.panels[self.tab].draw(self.screen, self.content_rect, pygame.mouse.get_pos())
+        self._draw_status()
+        self.manager.draw_ui(self.screen)
         pygame.display.flip()
 
-    def _draw_panel(self) -> None:
-        w, h = self.screen.get_size()
-        panel = pygame.Rect(w - PANEL_W, 0, PANEL_W, h)
-        pygame.draw.rect(self.screen, (32, 34, 40), panel)
-        x, y = panel.x + 12, 12
-
-        def line(text: str, bold: bool = False, color=(225, 225, 225)) -> None:
-            nonlocal y
-            font = self.font_bold if bold else self.font
-            self.screen.blit(font.render(text, True, color), (x, y))
-            y += font.get_linesize() + 2
-
-        sim = self.sim
-        clock = sim.clock
-        speed = SPEEDS[self.speed_idx]
-        hist = sim.history[-1]
-        line("Life-Simulator", bold=True)
-        daytime = "Nacht" if clock.is_night else "Tag"
-        line(f"Tag {clock.day + 1}, {clock.clock_text()} ({daytime}) · {clock.season_name}, J{clock.year + 1}")
-        line(f"Tempo: {speed:g}x  ({self.actual_tps:.0f} Ticks/s)" + ("  PAUSE" if self.paused else ""))
-        line(f"Minions: {len(sim.minions)}   Generation Ø {hist['mean_generation']:.1f}")
-        line(f"Gruppen: {len(sim.groups)} (größte {hist['largest_group']})")
-        line(f"Kämpfe: {sim.fights}   Geteilt: {sim.shares}")
-        line(f"Raubtiere: {len(sim.predators)}")
-        line(f"Gefressen: {sim.kills}   Vertrieben: {sim.repelled}")
-        d = sim.deaths
-        line(
-            f"Geburten: {sim.births}   Tote: {d[DeathCause.STARVATION]}/{d[DeathCause.OLD_AGE]}/"
-            f"{d[DeathCause.FIGHT]}/{d[DeathCause.PREDATOR]}"
-        )
-        line("(Hunger/Alter/Kampf/Raubtier)", color=(150, 150, 150))
-        line(f"Bäume: {len(sim.forest.trees)}   Früchte: {sim.forest.fruit_count()}")
-        y += 6
-
-        m = self.selected
-        if m is not None:
-            tpd = sim.config.ticks_per_day
-            rec = sim.lineage[m.id]
-            status = "" if m.alive else f" (tot: {m.death_cause.value})"
-            line(f"Minion #{m.id}{status}", bold=True)
-            group = sim.groups.get(m.group_id)
-            if group is not None:
-                role = ", Anführer" if group.leader == m.id else f", Anführer #{group.leader}"
-                self._draw_swatch(x, y, group.color)
-                line(f"    Gruppe #{group.id} ({len(group.members)}){role}")
-            else:
-                line("Keine Gruppe", color=(170, 170, 170))
-            line(f"Aktion: {m.action.value}")
-            stage = "" if m.is_adult else ", jung"
-            line(
-                f"Energie {m.energy:.0f}/{m.traits.max_energy:.0f} · "
-                f"Alter {m.age / tpd:.1f}/{m.max_age / tpd:.1f} T{stage}"
-            )
-            parents = f"#{rec.parents[0]} & #{rec.parents[1]}" if rec.parents else "Gründer"
-            line(f"Generation {m.generation}, Eltern: {parents}")
-            line(f"Kinder: {len(rec.children)}   Nachkommen: {sim.lineage.descendant_count(m.id)}")
-            line(f"Früchte: {m.fruits_eaten}   Können: {m.skill:.0%}   Geteilt: {m.times_shared}")
-            line(f"Kämpfe gewonnen/verloren: {m.fights_won}/{m.fights_lost}")
-            ties = sim.relations.strongest(m.id, 2)
-            line("Beziehungen: " + ("  ".join(f"#{o} {v:+.1f}" for o, v in ties) or "keine"))
-            y = self._draw_pyramid(x, y + 4, m.needs.levels()) + 6
-            row_h = self.font_small.get_linesize() + 1
-            for g in GENE_NAMES:
-                v = m.genome[g]
-                self.screen.blit(self.font_small.render(GENE_NAMES_DE[g], True, (200, 200, 200)), (x, y))
-                bar = pygame.Rect(x + 120, y + 3, 150, 9)
-                pygame.draw.rect(self.screen, (60, 60, 66), bar)
-                pygame.draw.rect(self.screen, (120, 180, 240), (bar.x, bar.y, bar.w * v, bar.h))
-                y += row_h
-            y += 6
-        else:
-            line("Klicke auf einen Minion.", color=(160, 160, 160))
-            y += 6
-
-        if self.show_help or m is None:
-            line("Steuerung", bold=True)
-            for text in HELP_LINES:
-                line(text, color=(170, 170, 170))
-        else:
-            line("H: Steuerung anzeigen", color=(150, 150, 150))
-
-    def _draw_swatch(self, x: int, y: int, color: tuple[int, int, int]) -> None:
-        pygame.draw.circle(self.screen, color, (x + 8, y + 9), 6, 3)
-
-    def _draw_pyramid(self, x: int, y: int, levels: tuple[float, ...]) -> int:
-        """Maslow pyramid, bottom level widest, each tier coloured by its satisfaction."""
-        tier_h, gap, base_w, shrink = 17, 2, PANEL_W - 24, 34
-        top = y
-        for i in reversed(range(len(levels))):
-            w = base_w - i * shrink
-            tier_y = top + (len(levels) - 1 - i) * (tier_h + gap)
-            rect = pygame.Rect(x + (base_w - w) // 2, tier_y, w, tier_h)
-            pygame.draw.rect(self.screen, satisfaction_color(levels[i]), rect, border_radius=3)
-            label = self.font_small.render(LEVEL_NAMES_DE[i], True, (20, 20, 24))
-            self.screen.blit(label, label.get_rect(center=rect.center))
-        return top + len(levels) * (tier_h + gap)
+    def _draw_status(self) -> None:
+        """Speed and pause state as an overlay in the map's corner."""
+        state = "PAUSE" if self.paused else f"{self.actual_tps:.0f} Ticks/s"
+        img = theme.font(13).render(state, True, theme.TEXT)
+        box = img.get_rect().inflate(12, 6)
+        box.topleft = (8, 8)
+        pygame.draw.rect(self.screen, theme.SURFACE, box, border_radius=4)
+        self.screen.blit(img, img.get_rect(center=box.center))

@@ -173,8 +173,8 @@ Rauschen. Hysterese verhindert ständiges Umentscheiden.
   Bedürfnis-Pyramide eingefärbt nach Sättigung, die aktuelle Aktion, Alter,
   Generation, Eltern und Kinder sowie die stärksten Beziehungen. Die Kamera
   kann dem Minion folgen.
-- **Tastatur:** Leertaste für Pause, `+`/`-` für das Tempo, `F5`/`F9` für
-  Speichern/Laden, `E` für den CSV-Export.
+- **Tastatur:** Leertaste für Pause, `+`/`-` für das Tempo, `T` für Turbo, `1`–`4` für
+  die Reiter; in Phase 7 kommen `F5`/`F9` für Speichern/Laden und `E` für den CSV-Export.
 
 ## 8. Phasen
 
@@ -191,7 +191,7 @@ Nach jeder Phase ist das Programm lauffähig, getestet und committet.
    Schlaf, Bewegungsbedarf, Erkunden, A*-Pfadfindung.
 4. ✅ **Soziales:** Beziehungen, Gruppen, Status/Anführer, Kampf und Teilen.
 5. ✅ **Raubtiere:** Population, Jagd, Fortpflanzung, Gruppenabwehr.
-6. **UI komplett:** pygame_gui-Einstellungspanel, Graphen, Inspektor.
+6. ✅ **UI komplett:** pygame_gui-Einstellungspanel, Graphen, Inspektor.
 7. **Extras:** Speichern/Laden, CSV-Export, Presets, Turbo-Modus,
    README/Bedienungsanleitung.
 

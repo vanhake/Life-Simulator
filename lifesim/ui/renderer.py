@@ -75,7 +75,9 @@ class Renderer:
                 small.set_at((x, y), TERRAIN_COLORS[Terrain(int(t.tiles[y, x]))])
         return pygame.transform.scale(small, (t.width * TERRAIN_TILE_PX, t.height * TERRAIN_TILE_PX))
 
-    def draw(self, surface: pygame.Surface, cam: Camera, selected: Minion | None) -> None:
+    def draw(
+        self, surface: pygame.Surface, cam: Camera, selected: Minion | Predator | None
+    ) -> None:
         surface.fill((20, 22, 26))
         self._draw_terrain(surface, cam)
 
@@ -136,8 +138,12 @@ class Renderer:
 
         if selected is not None and selected.alive:
             sx, sy = cam.world_to_screen(selected.x, selected.y)
-            pygame.draw.circle(surface, SELECT_COLOR, (sx, sy), max(4, int(selected.traits.size * z) + 4), 2)
-            vr = selected.vision(self.sim) * z
+            if isinstance(selected, Predator):
+                radius, vision = 0.7, self.sim.config.predator_vision
+            else:
+                radius, vision = selected.traits.size + 0.1, selected.vision(self.sim)
+            pygame.draw.circle(surface, SELECT_COLOR, (sx, sy), max(5, int(radius * z) + 4), 2)
+            vr = vision * z
             if vr < 4000:
                 pygame.draw.circle(surface, (255, 255, 255), (sx, sy), vr, 1)
             if selected.path:

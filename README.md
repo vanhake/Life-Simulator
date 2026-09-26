@@ -5,7 +5,7 @@ erzeugten Karte nach Früchten, folgen der Maslowschen Bedürfnispyramide,
 bilden Gruppen und entwickeln sich über Generationen weiter.
 
 Den vollständigen Umsetzungsplan beschreibt [PLAN.md](PLAN.md).
-**Aktueller Stand: Phase 5 (Raubtiere) abgeschlossen.**
+**Aktueller Stand: Phase 6 (Oberfläche) abgeschlossen.**
 
 - Prozedurale Karte mit Wiese, Wald, Sumpf, Berg und Fels
 - Bäume mit je einer Frucht, die nachwächst; Bäume altern, sterben und säen sich aus
@@ -42,21 +42,36 @@ python -m lifesim --seed 3 --minions 100 --predators 6 --width 160 --height 100
 python -m lifesim --headless --ticks 100000        # ohne Grafik, gibt Kennzahlen aus
 ```
 
+## Oberfläche
+
+Links die Karte, rechts eine Seitenleiste mit Werkzeugleiste (Pause, Einzelschritt,
+Tempo, Turbo) und vier Reitern:
+
+- **Übersicht:** Kennzahlen, Verlauf von Minions, Raubtieren und Gruppen sowie die
+  Entwicklung aller 13 Gene; mit der Maus über einem Diagramm erscheinen die Werte.
+- **Minion:** alles über den ausgewählten Minion oder das ausgewählte Raubtier:
+  Bedürfnispyramide, Bedürfnisse, Gene, Familie, Beziehungen, Erfahrung.
+  Lebende Verwandte und Bekannte lassen sich anklicken.
+- **Einstellungen:** Schieberegler für Nahrung, Evolution und Raubtiere, die sofort
+  wirken, sowie Startwerte (Seed, Anzahl, Kartengröße, Tageslänge …) für den Neustart.
+- **Hilfe:** Tastenkürzel und Legende der Symbole.
+
 ## Steuerung
 
 | Taste | Funktion |
 |---|---|
 | Leertaste | Pause / Weiter |
 | `+` / `-` | Tempo (0,25x bis 64x) |
+| `T` | Turbo: so schnell wie möglich |
 | `N` | Einzelschritt (in der Pause) |
 | WASD / Pfeile, rechte Maustaste ziehen | Karte bewegen |
-| Mausrad | Zoom |
-| Linksklick | Minion auswählen |
-| `F` | Ausgewähltem Minion folgen |
+| Mausrad | Zoom über der Karte, Scrollen in der Seitenleiste |
+| Linksklick | Minion oder Raubtier auswählen |
+| `F` | Ausgewähltem folgen |
 | Pos1 | Ganze Karte zeigen |
-| `R` | Neustart |
 | `G` | Minions nach Genen oder nach Gruppe einfärben |
-| `H` | Hilfe ein/aus |
+| `R` | Neustart |
+| `1` – `4` | Reiter wechseln |
 
 ## Tests
 
