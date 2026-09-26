@@ -1,0 +1,81 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset: life-simulator-linux
+          - os: windows-latest
+            asset: life-simulator-windows.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+      - name: Build (Linux)
+        if: runner.os != 'Windows'
+        run: >
+          pyinstaller --onefile --name life-simulator --paths .
+          --add-data "lifesim/presets:lifesim/presets"
+          --collect-data pygame_gui
+          lifesim/__main__.py
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: >
+          pyinstaller --onefile --name life-simulator --paths .
+          --add-data "lifesim/presets;lifesim/presets"
+          --collect-data pygame_gui
+          lifesim/__main__.py
+      - name: Rename output (Linux)
+        if: runner.os != 'Windows'
+        run: mv dist/life-simulator "dist/${{ matrix.asset }}"
+      - name: Rename output (Windows)
+        if: runner.os == 'Windows'
+        run: mv dist/life-simulator.exe "dist/${{ matrix.asset }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Ausführbar machen (Linux-Binary)
+        run: chmod +x dist/life-simulator-linux
+      - name: Release veröffentlichen
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Aktueller Stand
+          body: |
+            Automatisch gebauter Download-Build vom letzten Merge auf `main`
+            (Commit ${{ github.sha }}).
+
+            - `life-simulator-linux`: `chmod +x life-simulator-linux` und dann `./life-simulator-linux` ausführen
+            - `life-simulator-windows.exe`: direkt starten (ggf. SmartScreen-Warnung bestätigen, da unsigniert)
+          make_latest: true
+          files: |
+            dist/life-simulator-linux
+            dist/life-simulator-windows.exe
